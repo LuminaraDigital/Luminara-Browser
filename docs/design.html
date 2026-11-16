@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <title>Luminara Browser — Design System v2.1</title>
+  <style>
+    :root {
+      color-scheme: dark light;
+      --bg-0: light-dark(oklch(0.975 0.005 255), oklch(0.115 0.012 255));
+      --bg-1: light-dark(oklch(0.95 0.007 255), oklch(0.15 0.013 255));
+      --bg-2: light-dark(oklch(0.915 0.009 255), oklch(0.188 0.015 255));
+      --ink-0: light-dark(oklch(0.15 0.015 255), oklch(0.965 0.005 255));
+      --ink-1: light-dark(oklch(0.34 0.015 255), oklch(0.78 0.012 255));
+      --ink-2: light-dark(oklch(0.44 0.015 255), oklch(0.67 0.012 255));
+      --accent: light-dark(oklch(0.48 0.15 162), oklch(0.75 0.16 162));
+      --amber: light-dark(oklch(0.52 0.15 72), oklch(0.79 0.15 78));
+      --danger: light-dark(oklch(0.50 0.19 26), oklch(0.68 0.18 25));
+      --hairline: light-dark(oklch(0.15 0.01 255 / 0.12), oklch(1 0 0 / 0.09));
+      --specular: inset 0 1px 0 0 oklch(1 0 0 / 0.1);
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    body {
+      background: var(--bg-0); color: var(--ink-0); font-family: var(--font-sans);
+      padding: clamp(1rem, 3vw, 2.5rem); line-height: 1.5;
+    }
+    main { max-width: 1120px; margin: 0 auto; display: grid; gap: 20px; }
+    .kicker { font: 600 11px/1.2 var(--font-mono); letter-spacing: 0.11em; text-transform: uppercase; color: var(--accent); }
+    h1 { font-size: clamp(1.85rem, 3.4vw, 2.8rem); letter-spacing: -0.04em; line-height: 1.05; text-wrap: balance; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 14px; }
+    .card {
+      background: var(--bg-1); border: 1px solid var(--hairline); box-shadow: var(--specular);
+      border-radius: 16px; padding: 16px; display: grid; gap: 8px; min-width: 0;
+    }
+    .swatch { height: 42px; border-radius: 10px; border: 1px solid var(--hairline); }
+    .mono { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+    .btn {
+      padding: 9px 14px; border-radius: 10px; border: 1px solid var(--accent);
+      background: color-mix(in oklch, var(--accent) 16%, transparent); color: var(--ink-0);
+      font: 600 12px var(--font-mono); cursor: pointer; width: fit-content;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="kicker">SYNCHRONIZED DESIGN SYSTEM · WCAG 2.2 AA · OKLCH LIGHT-DARK()</div>
+      <h1>Luminara Browser Visual Token Reference</h1>
+      <p class="mono" style="margin-top:6px;">Mirrored live specification for <code>docs/design.md</code> (v2.1.0)</p>
+    </header>
+    <section class="grid" aria-label="Color Tokens">
+      <article class="card"><div class="swatch" style="background:var(--bg-0)"></div><strong>bg_canvas</strong><span class="mono">--bg-0</span></article>
+      <article class="card"><div class="swatch" style="background:var(--bg-1)"></div><strong>bg_panel</strong><span class="mono">--bg-1</span></article>
+      <article class="card"><div class="swatch" style="background:var(--bg-2)"></div><strong>bg_elevated</strong><span class="mono">--bg-2</span></article>
+      <article class="card"><div class="swatch" style="background:var(--accent)"></div><strong>accent_emerald</strong><span class="mono">--accent (&gt;= 4.8:1)</span></article>
+      <article class="card"><div class="swatch" style="background:var(--amber)"></div><strong>status_amber</strong><span class="mono">--amber (HITL Handoff)</span></article>
+      <article class="card"><div class="swatch" style="background:var(--danger)"></div><strong>status_danger</strong><span class="mono">--danger (Alert)</span></article>
+    </section>
+    <section class="card">
+      <div class="kicker">INTERACTIVE STATES &amp; CONCENTRIC RADIUS LAW (20px = 10px + 10px)</div>
+      <div style="background:var(--bg-2);padding:10px;border-radius:20px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <button class="btn" type="button">Primary CTA (Tab to verify 2px focus ring)</button>
+        <span class="mono">Metrics: 14/14 PASS · 9,530 ms · 0 leaks</span>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,101 @@
+{
+  "evidence_id": "ev_f9b7c2e2574a5d90071c94eddb3346f8b49ba617b87a8e7e49ea10072d2874ca",
+  "subject": {
+    "name": "frontend",
+    "digest": {
+      "sha256": "ffd00f4d59fd48dcd339ea22c45b5f7335c306ba77d6d3b5f754085fbf62d1e6"
+    },
+    "local_path": "<workspace>/BrowserPilot\\frontend",
+    "format": "directory",
+    "architecture": null
+  },
+  "provider": {
+    "id": "rea-javascript-application",
+    "name": "REA JavaScript application analyzer",
+    "version": "1"
+  },
+  "analysis_profile": null,
+  "predicate_type": "rea.javascript-application-analysis",
+  "operation": "analyze_javascript_application",
+  "parameters": {
+    "format": "auto",
+    "integrity_policy": "fail"
+  },
+  "raw_result": null,
+  "normalized_result": {
+    "input_path": "<workspace>/BrowserPilot\\frontend",
+    "format": "directory",
+    "root_artifact_sha256": "ffd00f4d59fd48dcd339ea22c45b5f7335c306ba77d6d3b5f754085fbf62d1e6",
+    "inventory_manifest_id": "agm_741c26f083018b393ead45336f6dc57945503cd9b20d97793fcbe49a8cdefc55",
+    "inventory_graph_sha256": "fdeccff3057773540e250faef119812193a06c710aa080e5f6d687e62a5e57a6",
+    "integrity_contradictions_count": 0,
+    "integrity_contradictions": [],
+    "graph": "<summary: dict>",
+    "summary": {
+      "browser_windows": 0,
+      "explicit_web_preferences": 0,
+      "preload_entrypoints": 0,
+      "context_bridge_apis": 0,
+      "exposed_api_members": 0,
+      "ipc": {
+        "operations": 0,
+        "literal_channels": 0,
+        "dynamic_channel_operations": 0,
+        "renderer_transmissions": 0,
+        "renderer_listeners": 0,
+        "main_handlers": 0,
+        "paired_renderer_transmissions": 0,
+        "ambiguous_renderer_transmissions": 0,
+        "unpaired_literal_renderer_transmissions": 0
+      },
+      "sender_validation_observations": 0,
+      "utility_processes": 0,
+      "resolved_utility_entrypoints": 0,
+      "native_addon_bindings": 0,
+      "resolved_native_addon_bindings": 0
+    },
+    "statistics": {
+      "relevant_files": 23,
+      "nested_asar_containers": 0,
+      "text_bytes_read": 227885,
+      "invalid_utf8_files": 0,
+      "parsed_javascript_files": 17,
+      "visited_ast_nodes": 7064,
+      "findings": 141,
+      "modules": 0,
+      "parse_failures": 2
+    },
+    "limitations_count": 6,
+    "limitations": [
+      "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
+      "Graph coverage is incomplete; unavailable facts remain explicit and must not be read as absence.",
+      "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
+      "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+      "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
+      "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code."
+    ],
+    "semantic_graph": "<summary: dict>"
+  },
+  "confidence": "derived",
+  "authority": "shipped-artifact",
+  "environment": null,
+  "limitations_count": 6,
+  "limitations": [
+    "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
+    "Graph coverage is incomplete; unavailable facts remain explicit and must not be read as absence.",
+    "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
+    "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+    "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
+    "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code."
+  ],
+  "relationship_coverage": null,
+  "locations_count": 1,
+  "locations": [
+    {
+      "kind": "artifact-path",
+      "path": "artifact-root"
+    }
+  ],
+  "evidence_links_count": 0,
+  "evidence_links": []
+}

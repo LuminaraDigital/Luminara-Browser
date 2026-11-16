@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="description" content="Luminara Browser — Privacy-hardened Ungoogled-Chromium 157 built for simultaneous Human + AI Agent co-browsing over Loopback CDP and MCP v2." />
+  <title>Luminara Browser — Simultaneous Human + AI Co-Browsing</title>
+  <style>
+    :root {
+      color-scheme: dark light;
+      --bg-0: light-dark(oklch(0.975 0.005 255), oklch(0.115 0.012 255));
+      --bg-1: light-dark(oklch(0.95 0.007 255), oklch(0.15 0.013 255));
+      --bg-2: light-dark(oklch(0.915 0.009 255), oklch(0.188 0.015 255));
+      --ink-0: light-dark(oklch(0.15 0.015 255), oklch(0.965 0.005 255));
+      --ink-1: light-dark(oklch(0.34 0.015 255), oklch(0.78 0.012 255));
+      --ink-2: light-dark(oklch(0.44 0.015 255), oklch(0.67 0.012 255));
+      --accent: light-dark(oklch(0.48 0.15 162), oklch(0.75 0.16 162));
+      --hairline: light-dark(oklch(0.15 0.01 255 / 0.12), oklch(1 0 0 / 0.09));
+      --specular: inset 0 1px 0 0 oklch(1 0 0 / 0.1);
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    body {
+      min-height: 100dvh;
+      background:
+        radial-gradient(960px 440px at 22% -5%, color-mix(in oklch, var(--accent) 11%, transparent), transparent 70%),
+        var(--bg-0);
+      color: var(--ink-0);
+      font-family: var(--font-sans);
+      line-height: 1.55;
+      padding: clamp(1rem, 3vw, 2.5rem);
+      -webkit-font-smoothing: antialiased;
+    }
+    header, main, footer { max-width: 1220px; width: 100%; margin: 0 auto; }
+    header, footer {
+      display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;
+      font-family: var(--font-mono); font-size: 12px; color: var(--ink-2);
+    }
+    main { display: grid; gap: 24px; margin-block: clamp(1.5rem, 4vw, 3rem); }
+    .kicker { font: 600 11px/1.2 var(--font-mono); letter-spacing: 0.11em; text-transform: uppercase; color: var(--accent); }
+    h1 {
+      font-size: clamp(2rem, 4.5vw, 3.6rem);
+      letter-spacing: -0.04em; line-height: 1.03; text-wrap: balance; max-width: 18ch;
+    }
+    .lede { color: var(--ink-1); max-width: 64ch; text-wrap: pretty; font-size: clamp(0.96rem, 1.1vw, 1.1rem); }
+    .cta-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .btn {
+      min-height: 40px; padding: 9px 16px; border-radius: 10px;
+      border: 1px solid var(--hairline); background: var(--bg-1); color: var(--ink-0);
+      font: 600 12px var(--font-mono); text-decoration: none; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 8px;
+    }
+    .btn.primary {
+      border-color: var(--accent);
+      background: color-mix(in oklch, var(--accent) 18%, transparent);
+    }
+    .bento { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; }
+    .card {
+      background: var(--bg-1); border: 1px solid var(--hairline); box-shadow: var(--specular);
+      border-radius: 16px; padding: 18px; display: grid; gap: 12px; min-width: 0; align-content: start;
+    }
+    .span-7 { grid-column: span 7; }
+    .span-5 { grid-column: span 5; }
+    @media (max-width: 880px) { .span-7, .span-5 { grid-column: span 12; } }
+    .metrics {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr)); gap: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+    .metric-box { background: var(--bg-2); border-radius: 10px; padding: 12px; border: 1px solid var(--hairline); }
+    .metric-val { font-size: 22px; font-weight: 700; color: var(--accent); font-family: var(--font-mono); }
+    .metric-lbl { font-size: 11px; color: var(--ink-2); font-family: var(--font-mono); text-transform: uppercase; }
+    pre {
+      background: var(--bg-2); border: 1px solid var(--hairline); border-radius: 10px;
+      padding: 12px; overflow-x: auto; font: 11.5px/1.5 var(--font-mono); color: var(--ink-0);
+    }
+    input[type="range"] { width: 100%; accent-color: oklch(0.75 0.16 162); }
+    .mono { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <header>
+    <span>● LUMINARA BROWSER v2.1 · UNGOOGLED-CHROMIUM 157.0.8103.78</span>
+    <nav style="display:flex;gap:12px;flex-wrap:wrap;">
+      <a href="/llms.txt" style="color:inherit;">/llms.txt</a>
+      <a href="/.well-known/agent.json" style="color:inherit;">/.well-known/agent.json</a>
+      <a href="/api/mcp-spec" style="color:inherit;">/api/mcp-spec</a>
+      <a href="/api/health" style="color:inherit;">/api/health</a>
+    </nav>
+  </header>
+
+  <main>
+    <section style="display:grid;gap:14px;">
+      <div class="kicker">ZERO GOOGLE TELEMETRY · LOOPBACK CDP :9229 · MCP v2 :8796</div>
+      <h1>One live browser window. Humans and AI agents simultaneously.</h1>
+      <p class="lede">
+        Luminara Browser fuses 134 Ungoogled-Chromium privacy patches with native Set-of-Marks DOM indexing,
+        per-domain parallel Bulk extraction, a 50-slot Undo/Redo Generative UI Studio, and SHA-256 hash-chained
+        <code>LUM-*</code> receipts.
+      </p>
+      <div class="cta-row">
+        <a class="btn primary" href="https://github.com/luminara-digital/luminara-browser/releases/latest">⬇ Download Windows x64 Portable</a>
+        <button class="btn" type="button" id="btnCopyMcp">Copy MCP v2 Config</button>
+        <a class="btn" href="/llms-full.txt">Read Agent Spec</a>
+      </div>
+    </section>
+
+    <div class="bento">
+      <section class="card span-7">
+        <div class="kicker">VERIFIED PRODUCTION TELEMETRY (14/14 REA GATE · 4/4 A/B SUITE)</div>
+        <div class="metrics">
+          <div class="metric-box"><div class="metric-val">-96.7%</div><div class="metric-lbl">Prompt Tokens</div></div>
+          <div class="metric-box"><div class="metric-val">4.54×</div><div class="metric-lbl">Bulk Speedup</div></div>
+          <div class="metric-box"><div class="metric-val">0 req</div><div class="metric-lbl">Google Calls</div></div>
+          <div class="metric-box"><div class="metric-val">14/14</div><div class="metric-lbl">REA Parity</div></div>
+        </div>
+
+        <label for="pageSlider" class="mono" style="margin-top:4px;">
+          Interactive Token Calculator: <strong id="pageCountOut">12</strong> multi-tab pages
+        </label>
+        <input id="pageSlider" type="range" min="1" max="50" value="12" />
+        <div class="mono" id="tokenCalcOut">Raw HTML: 29,004 tokens vs Luminara Set-of-Marks: 948 tokens (28,056 tokens saved)</div>
+      </section>
+
+      <section class="card span-5">
+        <div class="kicker">CONNECT ANY MCP v2 AGENT (2025-06-18)</div>
+        <pre id="mcpSnippet">{
+  "mcpServers": {
+    "luminara-browser": {
+      "url": "http://127.0.0.1:8796/api/agent/mcp"
+    }
+  }
+}</pre>
+        <div class="mono" id="copyStatus">Works with Claude Code, Antigravity, Hermes Agent, and Cursor. Login &amp; 2FA walls pause cleanly via <code>PAUSED_HUMAN_HANDOFF</code>.</div>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    <span>MIT License · BSD-3-Clause Upstream Patches</span>
+    <span>Hash-Chained Receipts: <code>LUM-&lt;unix_ms&gt;-&lt;sha256&gt;</code></span>
+  </footer>
+
+  <script>
+    const slider = document.getElementById('pageSlider');
+    const countOut = document.getElementById('pageCountOut');
+    const calcOut = document.getElementById('tokenCalcOut');
+    function updateCalc() {
+      const n = Number(slider.value);
+      countOut.textContent = String(n);
+      const raw = n * 2417;
+      const som = n * 79;
+      calcOut.textContent = `Raw HTML: ${raw.toLocaleString()} tokens vs Luminara Set-of-Marks: ${som.toLocaleString()} tokens (${(raw - som).toLocaleString()} tokens saved)`;
+    }
+    slider.addEventListener('input', updateCalc);
+    document.getElementById('btnCopyMcp').addEventListener('click', async () => {
+      const txt = document.getElementById('mcpSnippet').textContent;
+      try {
+        await navigator.clipboard.writeText(txt);
+        document.getElementById('copyStatus').textContent = 'Copied MCP v2 configuration to clipboard.';
+      } catch (_e) {}
+    });
+  </script>
+</body>
+</html>

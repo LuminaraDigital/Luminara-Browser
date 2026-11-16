@@ -1,0 +1,59 @@
+name: Luminara Browser CI & Security Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Binary & Secret Tracked-File Guard (< 5 MB, zero .zip/.exe/.dll/.env)
+        shell: python
+        run: |
+          import subprocess, sys
+          from pathlib import Path
+          blocked_exts = {".zip", ".7z", ".exe", ".msi", ".dll", ".pdb", ".crx", ".pak"}
+          files = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
+          bad = []
+          for rel in files:
+              p = Path(rel)
+              if p.name == ".env" or p.suffix.lower() in blocked_exts:
+                  bad.append(f"Blocked file committed: {rel}")
+              elif p.exists() and p.stat().st_size > 5 * 1024 * 1024:
+                  bad.append(f"Oversized file (>5MB): {rel} ({p.stat().st_size} bytes)")
+          if bad:
+              print("\n".join(bad), file=sys.stderr)
+              sys.exit(1)
+          print(f"Verified {len(files)} tracked files (zero binaries/secrets).")
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package & audit upstream Quilt patches
+        run: |
+          python -m pip install -e .
+          luminara-forge audit-patches
+          luminara-forge compile-overlay
+
+      - name: Run strict unit, security & A/B test suite
+        working-directory: chromium-forge
+        run: python -W error -m unittest discover -s tests -v
+
+      - name: Validate Cloudflare Worker & Static Assets bundle (--dry-run)
+        if: matrix.os == 'ubuntu-latest'
+        run: npx --yes wrangler@4 deploy --dry-run --outdir /tmp/cf-dry-run

@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <title>Luminara Browser Forge — REA Control Plane &amp; Agentic Customizer</title>
+  <style>
+    :root {
+      color-scheme: dark light;
+      --bg-canvas: light-dark(oklch(0.975 0.005 255), oklch(0.115 0.012 255));
+      --bg-panel: light-dark(oklch(0.95 0.007 255), oklch(0.148 0.014 255));
+      --bg-elevated: light-dark(oklch(0.92 0.009 255), oklch(0.182 0.016 255));
+      --bg-code: light-dark(oklch(0.935 0.008 255), oklch(0.095 0.01 255));
+      --ink-0: light-dark(oklch(0.15 0.015 255), oklch(0.96 0.006 255));
+      --ink-1: light-dark(oklch(0.36 0.015 255), oklch(0.76 0.012 255));
+      --ink-2: light-dark(oklch(0.44 0.015 255), oklch(0.67 0.012 255));
+      --emerald: light-dark(oklch(0.48 0.15 162), oklch(0.75 0.16 162));
+      --amber: light-dark(oklch(0.52 0.15 72), oklch(0.78 0.15 78));
+      --coral: light-dark(oklch(0.50 0.19 26), oklch(0.66 0.19 28));
+      --hairline: light-dark(oklch(0.15 0.01 255 / 0.12), oklch(1 0 0 / 0.09));
+      --specular: inset 0 1px 0 0 oklch(1 0 0 / 0.1);
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+      --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    html { scroll-padding-top: 76px; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background:
+        radial-gradient(900px 360px at 18% -5%, color-mix(in oklch, var(--emerald) 10%, transparent), transparent 70%),
+        var(--bg-canvas);
+      color: var(--ink-0);
+      font-family: var(--font-sans);
+      font-size: clamp(0.84rem, 0.8rem + 0.2vw, 0.92rem);
+      line-height: 1.5;
+      min-height: 100dvh;
+      -webkit-font-smoothing: antialiased;
+    }
+    .numeric, [data-metric], code, pre { font-variant-numeric: tabular-nums; }
+    h1, h2, h3 { text-wrap: balance; }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      backdrop-filter: blur(14px);
+      background: light-dark(oklch(0.965 0.006 255 / 0.88), oklch(0.12 0.012 255 / 0.85));
+      border-bottom: 1px solid var(--hairline);
+      padding: 12px clamp(1rem, 2.5vw, 2rem);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .brand-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .status-led {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: var(--emerald);
+      box-shadow: 0 0 12px var(--emerald);
+    }
+    .title {
+      font-size: clamp(1rem, 0.95rem + 0.3vw, 1.15rem);
+      font-weight: 600;
+      letter-spacing: -0.025em;
+    }
+    .kicker {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+      color: var(--ink-2);
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    button {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 8px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--hairline);
+      background: var(--bg-elevated);
+      color: var(--ink-0);
+      box-shadow: var(--specular);
+      cursor: pointer;
+      transition: transform 140ms var(--ease-out), border-color 140ms var(--ease-out), background 140ms var(--ease-out);
+    }
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      border-color: var(--emerald);
+    }
+    button:active:not(:disabled) { transform: scale(0.97); }
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid var(--emerald);
+      outline-offset: 2px;
+    }
+    button.primary {
+      background: color-mix(in oklch, var(--emerald) 18%, transparent);
+      border-color: var(--emerald);
+      color: var(--ink-0);
+    }
+    button:disabled { opacity: 0.5; cursor: wait; }
+
+    .workspace {
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: clamp(0.85rem, 2vw, 1.75rem);
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 16px;
+    }
+    .col-config { grid-column: span 5; display: grid; gap: 16px; align-content: start; min-width: 0; }
+    .col-inspect { grid-column: span 7; display: grid; gap: 16px; align-content: start; min-width: 0; }
+    @media (max-width: 1024px) {
+      .col-config, .col-inspect { grid-column: span 12; }
+    }
+
+    /* Concentric Radius Law: Outer 20px = Inner 8px + Padding 12px */
+    .panel {
+      background: var(--bg-panel);
+      border: 1px solid var(--hairline);
+      box-shadow: var(--specular), 0 12px 32px oklch(0 0 0 / 0.22);
+      border-radius: 20px;
+      padding: 16px;
+      animation: panelEnter 280ms var(--ease-out) both;
+    }
+    @keyframes panelEnter {
+      from { opacity: 0; transform: scale(0.98) translateY(8px); filter: blur(4px); }
+      to { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .panel, .tab-stage { animation: none !important; transition: opacity 150ms linear !important; }
+    }
+
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--hairline);
+    }
+    .metrics-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+    @media (max-width: 640px) { .metrics-strip { grid-template-columns: repeat(2, 1fr); } }
+    .metric-box {
+      background: var(--bg-elevated);
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+    .metric-val {
+      font-family: var(--font-mono);
+      font-size: 1.25rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin-top: 2px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    @media (max-width: 540px) { .form-grid { grid-template-columns: 1fr; } }
+    .field { display: grid; gap: 5px; }
+    .field.full { grid-column: 1 / -1; }
+    label {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--ink-1);
+      letter-spacing: 0.04em;
+    }
+    input[type="text"], select {
+      width: 100%;
+      background: var(--bg-code);
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: var(--ink-0);
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }
+    .toggles {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    @media (max-width: 540px) { .toggles { grid-template-columns: 1fr; } }
+    .toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--hairline);
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .tab-btn {
+      padding: 6px 11px;
+      font-size: 11px;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--ink-1);
+    }
+    .tab-btn.active {
+      background: var(--bg-elevated);
+      color: var(--emerald);
+      border-color: oklch(0.74 0.16 162 / 0.45);
+    }
+    pre.code-view {
+      background: var(--bg-code);
+      border: 1px solid var(--hairline);
+      border-radius: 10px;
+      padding: 14px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      line-height: 1.55;
+      max-height: 410px;
+      overflow: auto;
+      white-space: pre;
+      color: var(--ink-0);
+    }
+    .diff-add { color: light-dark(oklch(0.42 0.15 155), oklch(0.78 0.16 155)); }
+    .diff-del { color: light-dark(oklch(0.46 0.18 25), oklch(0.70 0.17 25)); }
+    .diff-hdr { color: light-dark(oklch(0.42 0.14 245), oklch(0.78 0.14 235)); }
+
+    .obl-list { display: grid; gap: 8px; }
+    .obl-row {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--hairline);
+    }
+    .pill-pass {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: oklch(0.74 0.16 162 / 0.16);
+      color: var(--emerald);
+      border: 1px solid oklch(0.74 0.16 162 / 0.4);
+    }
+    .pill-fail {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: oklch(0.66 0.19 28 / 0.16);
+      color: var(--coral);
+    }
+    .banner {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--hairline);
+      background: var(--bg-elevated);
+      display: none;
+    }
+    .banner.visible { display: block; }
+    .banner.err { border-color: var(--coral); color: var(--coral); }
+    .banner.ok { border-color: var(--emerald); color: var(--emerald); }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-row">
+      <span class="status-led"></span>
+      <div>
+        <div class="title">Luminara Browser Forge Cockpit</div>
+        <div class="kicker">REA Clean-Room Engine · Ungoogled 157 + Comet + BrowserPilot · MCP v2 :8796</div>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="btnCompile" type="button">1. Compile Overlay</button>
+      <button id="btnVerify" type="button">2. Run REA Gate (14/14)</button>
+      <button id="btnPortable" type="button">3. Build Portable Win64</button>
+      <button id="btnLaunch" class="primary" type="button">Launch Luminara Browser ↗</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <div class="col-config">
+      <section class="panel">
+        <div class="panel-head">
+          <span class="kicker">01 / Fork Identity &amp; Network Trap</span>
+          <span class="kicker" id="draftBadge">SYNCED</span>
+        </div>
+        <div id="statusBanner" class="banner" style="margin-bottom:12px;"></div>
+        <form id="profileForm">
+          <div class="form-grid">
+            <div class="field">
+              <label for="brand_name">Brand Name</label>
+              <input id="brand_name" name="brand_name" type="text" required />
+            </div>
+            <div class="field">
+              <label for="slug">Distribution Slug</label>
+              <input id="slug" name="slug" type="text" required />
+            </div>
+            <div class="field">
+              <label for="trap_tld">Blackhole Trap TLD</label>
+              <input id="trap_tld" name="trap_tld" type="text" pattern="[a-z0-9]{3,16}" required />
+            </div>
+            <div class="field">
+              <label for="default_search">Default Search (ID-1 Safe)</label>
+              <select id="default_search" name="default_search"></select>
+            </div>
+            <div class="field full">
+              <label for="extra_blocked_domains">Extra Blocked Domains (comma-separated)</label>
+              <input id="extra_blocked_domains" name="extra_blocked_domains" type="text" placeholder="telemetry.example.com, metrics.vendor.io" />
+            </div>
+          </div>
+
+          <div class="toggles">
+            <label class="toggle"><input type="checkbox" name="portable_mode" /> Portable Vault (--disable-encryption)</label>
+            <label class="toggle"><input type="checkbox" name="canvas_noise" /> Canvas Fingerprint Noise</label>
+            <label class="toggle"><input type="checkbox" name="client_rects_noise" /> ClientRects Noise</label>
+            <label class="toggle"><input type="checkbox" name="popups_to_tabs" /> Force Pop-ups to Tabs</label>
+            <label class="toggle"><input type="checkbox" name="force_punycode" /> Punycode IDN Protection</label>
+            <label class="toggle"><input type="checkbox" name="allow_crx_install" /> Direct CRX Install Prompt</label>
+            <label class="toggle"><input type="checkbox" name="disable_webrtc_leak" /> Block WebRTC UDP Leak</label>
+            <label class="toggle"><input type="checkbox" name="proprietary_codecs" /> Chrome Media Codecs (GN)</label>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <span class="kicker">02 / Portable Win64 Runtime Telemetry</span>
+          <span class="kicker" id="portStateBadge">CHECKING...</span>
+        </div>
+        <div class="metrics-strip">
+          <div class="metric-box"><div class="kicker">Core Patches</div><div class="metric-val numeric">108</div></div>
+          <div class="metric-box"><div class="kicker">Win Patches</div><div class="metric-val numeric">26</div></div>
+          <div class="metric-box"><div class="kicker">Cache Zip</div><div class="metric-val numeric" id="zipSizeVal">--</div></div>
+          <div class="metric-box"><div class="kicker">REA Gate</div><div class="metric-val numeric" id="reaScoreVal">--</div></div>
+        </div>
+        <div style="margin-top:10px; font-family:var(--font-mono); font-size:11px; color:var(--ink-2); word-break:break-all;" id="distPathBox"></div>
+      </section>
+    </div>
+
+    <div class="col-inspect">
+      <section class="panel">
+        <div class="panel-head">
+          <span class="kicker">03 / Live Compiled Patch &amp; GN Inspector</span>
+          <span class="kicker">Zero-Fuzz Verified</span>
+        </div>
+        <div class="tabs" id="artifactTabs">
+          <button class="tab-btn active" data-tab="search_patch" type="button">custom-search-engine.patch</button>
+          <button class="tab-btn" data-tab="branding_patch" type="button">custom-branding.patch</button>
+          <button class="tab-btn" data-tab="args_gn" type="button">args.gn (Sorted)</button>
+          <button class="tab-btn" data-tab="domain_regex" type="button">domain_regex.list</button>
+          <button class="tab-btn" data-tab="cloud_workflow" type="button">cloud-build-windows.yml</button>
+        </div>
+        <pre class="code-view" id="codeStage">Loading compiled overlay...</pre>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <span class="kicker">04 / REA Reconstruction Obligation Ledger</span>
+          <span class="kicker" id="reaElapsed">-- ms</span>
+        </div>
+        <div class="obl-list" id="oblContainer">
+          <div style="color:var(--ink-2); font-size:12px;">Click "Run REA Gate (14/14)" to execute all 14 obligation checks.</div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const LS_KEY = 'chromium_forge:active_tab';
+    let currentState = null;
+    let activeTab = localStorage.getItem(LS_KEY) || 'search_patch';
+
+    function showBanner(msg, kind = 'ok') {
+      const b = document.getElementById('statusBanner');
+      b.textContent = msg;
+      b.className = 'banner visible ' + kind;
+    }
+
+    function renderDiffOrCode(text) {
+      const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      return text.split('\n').map(line => {
+        if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('@@')) {
+          return `<span class="diff-hdr">${esc(line)}</span>`;
+        }
+        if (line.startsWith('+')) return `<span class="diff-add">${esc(line)}</span>`;
+        if (line.startsWith('-')) return `<span class="diff-del">${esc(line)}</span>`;
+        return esc(line);
+      }).join('\n');
+    }
+
+    function syncCodeView() {
+      document.querySelectorAll('#artifactTabs .tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === activeTab);
+      });
+      if (!currentState || !currentState.artifacts) return;
+      const raw = currentState.artifacts[activeTab] || '';
+      document.getElementById('codeStage').innerHTML = renderDiffOrCode(raw);
+    }
+
+    function renderObligations(report) {
+      const box = document.getElementById('oblContainer');
+      if (!report || !report.obligations) return;
+      document.getElementById('reaScoreVal').textContent = `${report.passed_count}/${report.total_count}`;
+      document.getElementById('reaElapsed').textContent = `${report.elapsed_ms} ms`;
+      box.replaceChildren();
+      report.obligations.forEach(obl => {
+        const row = document.createElement('div');
+        row.className = 'obl-row';
+        const pill = document.createElement('span');
+        pill.className = obl.passed ? 'pill-pass' : 'pill-fail';
+        pill.textContent = obl.obligation_id;
+        const mid = document.createElement('div');
+        const t = document.createElement('div');
+        t.style.cssText = 'font-weight:600; font-size:12.5px;';
+        t.textContent = obl.title;
+        const d = document.createElement('div');
+        d.style.cssText = 'color:var(--ink-2); font-size:11.5px;';
+        d.textContent = obl.details;
+        mid.append(t, d);
+        const st = document.createElement('span');
+        st.className = 'kicker';
+        st.textContent = obl.passed ? 'PASS' : 'FAIL';
+        row.append(pill, mid, st);
+        box.appendChild(row);
+      });
+    }
+
+    function populateForm(profile, presets) {
+      const sel = document.getElementById('default_search');
+      sel.replaceChildren();
+      Object.entries(presets).forEach(([k, label]) => {
+        const opt = document.createElement('option');
+        opt.value = k;
+        opt.textContent = label;
+        sel.appendChild(opt);
+      });
+      const form = document.getElementById('profileForm');
+      ['brand_name', 'slug', 'trap_tld', 'default_search'].forEach(k => {
+        if (form.elements[k]) form.elements[k].value = profile[k] || '';
+      });
+      form.elements['extra_blocked_domains'].value = (profile.extra_blocked_domains || []).join(', ');
+      [
+        'portable_mode', 'canvas_noise', 'client_rects_noise', 'popups_to_tabs',
+        'force_punycode', 'allow_crx_install', 'disable_webrtc_leak', 'proprietary_codecs'
+      ].forEach(k => {
+        if (form.elements[k]) form.elements[k].checked = Boolean(profile[k]);
+      });
+    }
+
+    function readFormPayload() {
+      const form = document.getElementById('profileForm');
+      const extraRaw = form.elements['extra_blocked_domains'].value;
+      return {
+        brand_name: form.elements['brand_name'].value.trim(),
+        slug: form.elements['slug'].value.trim(),
+        channel_tag: form.elements['slug'].value.trim() + '-agentic',
+        trap_tld: form.elements['trap_tld'].value.trim(),
+        default_search: form.elements['default_search'].value,
+        extra_blocked_domains: extraRaw.split(',').map(s => s.trim()).filter(Boolean),
+        portable_mode: form.elements['portable_mode'].checked,
+        canvas_noise: form.elements['canvas_noise'].checked,
+        client_rects_noise: form.elements['client_rects_noise'].checked,
+        popups_to_tabs: form.elements['popups_to_tabs'].checked,
+        force_punycode: form.elements['force_punycode'].checked,
+        allow_crx_install: form.elements['allow_crx_install'].checked,
+        disable_webrtc_leak: form.elements['disable_webrtc_leak'].checked,
+        proprietary_codecs: form.elements['proprietary_codecs'].checked,
+      };
+    }
+
+    async function postJson(url, payload) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {})
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) throw new Error(data.error || ('HTTP ' + res.status));
+      return data;
+    }
+
+    async function loadInitialState() {
+      try {
+        const res = await fetch('/api/state');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        currentState = await res.json();
+        populateForm(currentState.profile, currentState.presets);
+        syncCodeView();
+        if (currentState.rea_report) renderObligations(currentState.rea_report);
+        const ps = currentState.portable_status;
+        document.getElementById('zipSizeVal').textContent = ps.zip_cached ? `${ps.zip_size_mb}M` : 'MISS';
+        document.getElementById('portStateBadge').textContent = ps.built ? 'BUILT & READY' : 'READY TO EXTRACT';
+        document.getElementById('distPathBox').textContent = 'Dist: ' + ps.dist_dir;
+      } catch (err) {
+        showBanner('Failed to load Studio state: ' + err.message, 'err');
+      }
+    }
+
+    document.querySelectorAll('#artifactTabs .tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        activeTab = btn.dataset.tab;
+        localStorage.setItem(LS_KEY, activeTab);
+        syncCodeView();
+      });
+    });
+
+    document.getElementById('btnCompile').addEventListener('click', async e => {
+      const form = document.getElementById('profileForm');
+      if (!form.reportValidity()) return;
+      e.target.disabled = true;
+      try {
+        const data = await postJson('/api/compile', readFormPayload());
+        currentState.profile = data.profile;
+        currentState.artifacts = data.artifacts;
+        syncCodeView();
+        showBanner('Compiled zero-fuzz patches, domain_regex.list, and sorted args.gn.', 'ok');
+      } catch (err) {
+        showBanner(err.message, 'err');
+      } finally {
+        e.target.disabled = false;
+      }
+    });
+
+    document.getElementById('btnVerify').addEventListener('click', async e => {
+      e.target.disabled = true;
+      try {
+        const data = await postJson('/api/verify', {});
+        renderObligations(data.rea_report);
+        showBanner(`REA Gate passed ${data.rea_report.passed_count}/${data.rea_report.total_count} obligations.`, 'ok');
+      } catch (err) {
+        showBanner(err.message, 'err');
+      } finally {
+        e.target.disabled = false;
+      }
+    });
+
+    document.getElementById('btnPortable').addEventListener('click', async e => {
+      const form = document.getElementById('profileForm');
+      if (!form.reportValidity()) return;
+      e.target.disabled = true;
+      showBanner('Assembling customized portable Luminara Browser 157 Win64 bundle...', 'ok');
+      try {
+        await postJson('/api/compile', readFormPayload());
+        const data = await postJson('/api/build-portable', {});
+        document.getElementById('portStateBadge').textContent = 'BUILT & READY';
+        document.getElementById('distPathBox').textContent = 'Dist: ' + data.result.dist_dir;
+        showBanner('Portable browser built at ' + data.result.cmd_launcher, 'ok');
+      } catch (err) {
+        showBanner(err.message, 'err');
+      } finally {
+        e.target.disabled = false;
+      }
+    });
+
+    document.getElementById('btnLaunch').addEventListener('click', async e => {
+      const form = document.getElementById('profileForm');
+      if (!form.reportValidity()) return;
+      e.target.disabled = true;
+      try {
+        await postJson('/api/compile', readFormPayload());
+        const data = await postJson('/api/launch-browser', {});
+        showBanner('Launched ' + data.launched, 'ok');
+      } catch (err) {
+        showBanner(err.message, 'err');
+      } finally {
+        e.target.disabled = false;
+      }
+    });
+
+    loadInitialState();
+  </script>
+</body>
+</html>

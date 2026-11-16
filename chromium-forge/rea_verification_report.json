@@ -1,0 +1,216 @@
+{
+  "target_chromium_version": "157.0.8103.78",
+  "brand_name": "Luminara Browser",
+  "slug": "luminara-browser",
+  "all_obligations_passed": true,
+  "passed_count": 14,
+  "total_count": 14,
+  "elapsed_ms": 9719.2,
+  "obligations": [
+    {
+      "obligation_id": "OBL-01",
+      "title": "Downloads INI Schema, .hashes Verification & Windows-Safe Streaming Unpack",
+      "confidence": "observed",
+      "upstream_evidence": "ungoogled-chromium/utils/downloads.py:46-155,248-255; ungoogled-chromium-windows/downloads.ini:1-237",
+      "passed": true,
+      "details": "Validated 1 core INI section + 21 Windows toolchain sections for Chromium 157.0.8103.78; verified '..' traversal rejection and pure-Python tar unpack.",
+      "metrics": {
+        "core_sections": 1,
+        "windows_sections": 21
+      }
+    },
+    {
+      "obligation_id": "OBL-02",
+      "title": "Binary Pruning & Windows Backslash-Safe KEEP_FILES Normalization",
+      "confidence": "observed",
+      "upstream_evidence": "ungoogled-chromium/utils/prune_binaries.py:20-250 (fixes Windows bug at line 196)",
+      "passed": true,
+      "details": "Pruned listed & contingent binaries while preserving all 3 KEEP_FILES and KEEP_SUFFIXES on Windows; verified 14,266 upstream pruning entries.",
+      "metrics": {
+        "upstream_pruning_entries": 14266,
+        "kept_files_verified": 3
+      }
+    },
+    {
+      "obligation_id": "OBL-03",
+      "title": "Quilt Series Audit (108 Core + 26 Windows Patches) & Zero-Fuzz Hunk Verification",
+      "confidence": "observed",
+      "upstream_evidence": "ungoogled-chromium/patches/series:1-110; ungoogled-chromium-windows/patches/series:1-26",
+      "passed": true,
+      "details": "Zero parse/hunk/unused errors across 108 core patches (1416 hunks) and 26 Windows patches (146 hunks).",
+      "metrics": {
+        "core_patches": 108,
+        "core_hunks": 1416,
+        "windows_patches": 26,
+        "windows_hunks": 146
+      }
+    },
+    {
+      "obligation_id": "OBL-04",
+      "title": "Domain Substitution, CRLF Byte Roundtrip, \u00b11s Timestamp & CRC32 Tamper Gate",
+      "confidence": "observed",
+      "upstream_evidence": "ungoogled-chromium/utils/domain_substitution.py:39-313; domain_regex.list:1-21",
+      "passed": true,
+      "details": "Rewrote Google host to .void0 preserving CRLF bytes, verified +1s/-1s mtime invariant, blocked post-substitution tampering via CRC32 gate, and restored exact bytes.",
+      "metrics": {
+        "regex_rules": 21,
+        "tamper_gate_blocked": true
+      }
+    },
+    {
+      "obligation_id": "OBL-05",
+      "title": "Network Trap Sink (.void0 -> trk: -> ERR_BLOCKED_BY_CLIENT)",
+      "confidence": "observed",
+      "upstream_evidence": "patches/core/ungoogled-chromium/block-trk-and-subdomains.patch:83-200",
+      "passed": true,
+      "details": "Verified customized URLRequest trap rewrites *.void0 to trk: and terminates in TrkProtocolHandler with zero socket traffic.",
+      "metrics": {
+        "trap_tld": "void0",
+        "trap_scheme": "trk"
+      }
+    },
+    {
+      "obligation_id": "OBL-06",
+      "title": "Custom Fork Compiler (Brand Channel, Prepopulated Search ID-1 Invariant & Patch Revert)",
+      "confidence": "observed",
+      "upstream_evidence": "replace-google-search-engine-with-nosearch.patch:1-34; add-extra-channel-info.patch:1-22",
+      "passed": true,
+      "details": "Compiled & verified patches for 'Luminara Browser' with default search 'DuckDuckGo' while preserving SEARCH_ENGINE_GOOGLE ID-1.",
+      "metrics": {
+        "brand_name": "Luminara Browser",
+        "default_search": "DuckDuckGo"
+      }
+    },
+    {
+      "obligation_id": "OBL-07",
+      "title": "Sorted GN Flags Merger, Safe AST FILES.cfg Packager & Windows Portable Target",
+      "confidence": "observed",
+      "upstream_evidence": "devutils/check_gn_flags.py:28-80; utils/filescfg.py:22-95; package.py:48-91",
+      "passed": true,
+      "details": "Validated 35 sorted/deduplicated GN args, verified AST FILES.cfg archive exclusion (.pdb/mini_installer), and checked portable runtime status.",
+      "metrics": {
+        "merged_gn_count": 35,
+        "portable_binary_present": true,
+        "pe": {
+          "valid_pe": true,
+          "machine_hex": "0x8664",
+          "architecture": "x64",
+          "sections": 11,
+          "coff_timestamp": 1794073425,
+          "size_bytes": 4060672
+        },
+        "headless_smoke": {
+          "exit_code": 0,
+          "dom_length": 32291,
+          "rendered_custom_ntp": true
+        }
+      }
+    },
+    {
+      "obligation_id": "OBL-08",
+      "title": "Comet Workspace Surfaces (XSS-Free New Tab, Sortable Table, Todos/Settings) & MV3 Copilot",
+      "confidence": "observed",
+      "upstream_evidence": "comet-browser/comet/{newtab,todo,settings,welcome}.html; renderer.js:56-89; rea_comet_evidence.json",
+      "passed": true,
+      "details": "Reconstructed Comet workspaces natively inside Ungoogled-Chromium 157 with zero innerHTML XSS, real column sorting, persistent localStorage, and MV3 sidePanel + PNG icons.",
+      "metrics": {
+        "rea_evidence_files_verified": 3,
+        "zero_innerhtml_xss": true
+      }
+    },
+    {
+      "obligation_id": "OBL-09",
+      "title": "Dual Human + AI Co-Browsing CDP Bridge & Tab Lease Preemption",
+      "confidence": "observed",
+      "upstream_evidence": "BrowserPilot/backend/browser_controller.py:85-210 (upgraded to browser-level Target.createTarget + RLock)",
+      "passed": true,
+      "details": "Verified live RFC 6455 CDP WebSocket session against Chromium 157, concurrent-safe browser background tab creation, lease collision guard, and instant human takeover preemption.",
+      "metrics": {
+        "open_tabs": 1,
+        "collision_blocked": true,
+        "human_preempted": true
+      }
+    },
+    {
+      "obligation_id": "OBL-10",
+      "title": "Set-of-Marks [1..N] DOM Indexer, Real CSS Selectors & Live Action Execution",
+      "confidence": "observed",
+      "upstream_evidence": "BrowserPilot/backend/browser_controller.py:590-690 (fixes empty cssSelector stub & stale index ghost clicks)",
+      "passed": true,
+      "details": "Indexed 2 visible DOM elements with non-empty CSS selectors (`#queryInput`, `#applyBtn`), rendered Trusted-Types-safe HUD badges, and verified live type+click execution.",
+      "metrics": {
+        "indexed_elements": 2,
+        "dom_state_after_click": "Filtered:Quantum"
+      }
+    },
+    {
+      "obligation_id": "OBL-11",
+      "title": "Perceive-Decide-Act Autonomous Goal Loop & Persisted PAUSED_HUMAN_HANDOFF Gate",
+      "confidence": "observed",
+      "upstream_evidence": "BrowserPilot/backend/agent.py:112-340 + multi-LLM cascading router + disk-persisted HITL handoff",
+      "passed": true,
+      "details": "Completed multi-step goal with `<untrusted_page_data>` framing and verified immediate disk-persisted `PAUSED_HUMAN_HANDOFF` pause on login/2FA wall with zero bypass attempts.",
+      "metrics": {
+        "completed_steps": 2,
+        "handoff_gate": "login_or_mfa_wall"
+      }
+    },
+    {
+      "obligation_id": "OBL-12",
+      "title": "Parallel Multi-Tab BulkEngine, Per-Domain Lock Isolation & Checkpointing",
+      "confidence": "observed",
+      "upstream_evidence": "BrowserPilot/backend/bulk_engine.py:105-295 (fixes global lock serialization & tabs[0] WS collision)",
+      "passed": true,
+      "details": "Extracted 5 structured rows across 2 parallel background tabs with isolated per-domain locks and saved resumable checkpoint `rea_verify_bulk.json`.",
+      "metrics": {
+        "rows_extracted": 5,
+        "distinct_domain_locks": true
+      }
+    },
+    {
+      "obligation_id": "OBL-13",
+      "title": "Domain-Agnostic Generative UI Synthesis (SummaryBar KPIs & Multi-Format Export)",
+      "confidence": "observed",
+      "upstream_evidence": "BrowserPilot/generative-ui/src/lib/{attributeIntelligence,componentMapper}.ts; rea_browserpilot_genui_evidence.json",
+      "passed": true,
+      "details": "Synthesized 5 typed entities and SummaryBar KPIs (`Price` min=$19.0, max=$149.0, avg=$69.0) plus formula-safe CSV/Markdown/JSON exports.",
+      "metrics": {
+        "entities": 5,
+        "summary_bar": {
+          "metric_name": "Price",
+          "count": 5,
+          "min": 19.0,
+          "max": 149.0,
+          "avg": 69.0,
+          "spread_pct": 188.4
+        }
+      }
+    },
+    {
+      "obligation_id": "OBL-14",
+      "title": "Luminara Agent Daemon (DNS-Rebind/Null-Origin Guard, MCP v2 & Hash-Chained LUM-* Receipts)",
+      "confidence": "observed",
+      "upstream_evidence": "BrowserPilot/backend/main.py:18-24 + Luminara MCP v2 2025-06-18 + SHA-256 chain verifier",
+      "passed": true,
+      "details": "Verified `/llms.txt`, `/.well-known/agent.json`, 10 MCP v2 tools (`2025-06-18`), 403 rejection of DNS-rebinding & unkeyed `Origin: null`, and 8 hash-chained `LUM-*` receipts.",
+      "metrics": {
+        "mcp_tools": 10,
+        "dns_rebind_blocked": true,
+        "null_sandbox_blocked": true,
+        "chain_verified_receipts": 8
+      }
+    }
+  ],
+  "residual_unknowns": [
+    {
+      "id": "RU-01",
+      "scope": "Excluded anti-bot / CAPTCHA / fingerprint-evasion modules from BrowserPilot",
+      "reason": "Strictly excluded (`anti_bot_detection.py`, `stealth_engine.py`, `fingerprint_profile.py`, `human_behavior.py`) per safety & access-control rules; replaced with `PAUSED_HUMAN_HANDOFF` co-browsing so the human completes login/MFA/verification directly in the shared browser tab."
+    },
+    {
+      "id": "RU-02",
+      "scope": "Full 150GB Chromium C++ local compilation",
+      "reason": "Host drive C: has ~70 GB free (full build/src + out/Default requires ~150 GB and ~20 CPU-hours). Mitigated via 16-stage GitHub Actions cloud workflow + instant local portable Luminara Browser 157 assembly."
+    }
+  ]
+}

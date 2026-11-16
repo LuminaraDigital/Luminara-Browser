@@ -1,0 +1,47 @@
+# Luminara Browser — Zero-Binary & Secret Git Guard
+# Excludes ~650 MB unpacked Chromium runtimes, ~200 MB cached archives, and runtime ledgers
+
+chromium-forge/dist/
+chromium-forge/cache/
+chromium-forge/outputs/
+ungoogled-chromium/build/
+ungoogled-chromium-windows/build/
+ungoogled-chromium-windows/ungoogled-chromium/
+
+# Binary & archive hard block (prevents GitHub 100 MB push failures)
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+*.tar.bz2
+*.tbz2
+*.tar.xz
+*.exe
+*.msi
+*.dll
+*.pdb
+*.so
+*.dylib
+*.crx
+*.pak
+
+# Python / Node / Cloudflare local state
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+node_modules/
+.wrangler/
+.dev.vars
+
+# Secrets & OS metadata
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
