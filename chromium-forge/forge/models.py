@@ -87,6 +87,7 @@ class ForkProfile:
     custom_search_url: str = ""
     custom_suggest_url: str = ""
     portable_mode: bool = True
+    roaming_unencrypted_cookies: bool = False
     canvas_noise: bool = True
     client_rects_noise: bool = True
     webgl_spoof: bool = False
@@ -100,6 +101,10 @@ class ForkProfile:
     enable_widevine: bool = True
     proprietary_codecs: bool = True
     enable_agent_cobrowsing: bool = True
+    enable_webmcp: bool = True
+    enable_shield_v3: bool = True
+    enable_tab_hibernation: bool = True
+    guard_network_mutations: bool = False
     cdp_port: int = 9229
     agent_port: int = 8796
     target_cpu: str = "x64"
@@ -152,7 +157,7 @@ class ForkProfile:
             "--disable-component-update",
             "--disable-domain-reliability",
         ]
-        if self.portable_mode:
+        if self.portable_mode and self.roaming_unencrypted_cookies:
             switches.extend(["--disable-encryption", "--disable-machine-id"])
         if self.canvas_noise:
             switches.append("--fingerprinting-canvas-image-data-noise")

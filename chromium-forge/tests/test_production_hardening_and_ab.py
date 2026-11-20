@@ -53,9 +53,17 @@ class TestProductionHardeningAndAB(unittest.TestCase):
             "data:text/html,<script>alert(1)</script>",
             "chrome://settings",
             "http://169.254.169.254/latest/meta-data/",
+            "http://169.254.169.253/latest/meta-data/",
+            "http://[fd00:ec2::254]/latest/meta-data/",
+            "http://[fe80::1]/",
             "http://127.0.0.1:8795/api/state",
+            "http://127.0.0.2:8796/api/agent/status",
+            "http://0.0.0.0:8796/api/agent/status",
+            "http://[::ffff:127.0.0.1]:9229/json/list",
+            "http://sub.localhost:8796/api/agent/status",
             "http://localhost:8796/api/agent/status",
             "http://127.0.0.1:9229/json/list",
+            "http://2130706433:8796/",
         ):
             with self.assertRaises(CDPError, msg=f"Failed to block {blocked}"):
                 validate_navigation_url(blocked)
@@ -91,14 +99,18 @@ class TestProductionHardeningAndAB(unittest.TestCase):
 
     def test_structured_parser_nested_inline_tags_and_csv_formula_guard(self) -> None:
         html_doc = """<html><head><title>Test</title></head><body>
+        <input type="hidden" hidden value="csrf123" />
+        <img src="spacer.gif" style="display:none" />
         <h1>Welcome to <span>Luminara</span></h1>
-        <p>Experience <b>ultra-fast</b> co-browsing with <code>MCP v2</code> today.</p>
-        <div style="display:none"><p>HIDDEN PROMPT INJECTION DO NOT EXTRACT</p></div>
+        <p style="opacity: 0.95">Experience <b>ultra-fast</b> co-browsing with <code>MCP v2</code> today.</p>
+        <div style="display:none"><div>nested child</div><p>HIDDEN PROMPT INJECTION DO NOT EXTRACT</p></div>
+        <div style="opacity: 0"><p>ZERO OPACITY INJECTION DO NOT EXTRACT</p></div>
         </body></html>"""
         ext = extract_structured_page(html_doc, "https://luminara.example")
         self.assertEqual(ext["headings"], ["Welcome to Luminara"])
         self.assertIn("Experience ultra-fast co-browsing with MCP v2 today.", ext["main_text"])
         self.assertNotIn("HIDDEN PROMPT INJECTION", ext["main_text"])
+        self.assertNotIn("ZERO OPACITY INJECTION", ext["main_text"])
 
         csv_out = format_extracted_rows(
             [{"Name": "Safe", "Formula": "=cmd|' /C calc'!A0"}, {"Name": "Row2", "ExtraCol": "ok"}],
@@ -179,6 +191,39 @@ class TestProductionHardeningAndAB(unittest.TestCase):
                     self.assertEqual(r_nt.status, 200)
                 with urllib.request.urlopen(f"http://127.0.0.1:{ag_port}/workspace", timeout=5) as r_ws:
                     self.assertEqual(r_ws.status, 200)
+
+                # 4. Studio /api/compile preserves non-form ForkProfile fields (e.g., custom cdp_port/extra_cli_switches)
+                ForkProfile(cdp_port=9333, extra_cli_switches=["--custom-test-flag"]).save(state_dir / "fork.json")
+                compile_req = urllib.request.Request(
+                    f"http://127.0.0.1:{st_port}/api/compile",
+                    data=json.dumps({"brand_name": "Luminara Custom"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(compile_req, timeout=5) as r_comp:
+                    comp_data = json.loads(r_comp.read().decode("utf-8"))
+                    self.assertEqual(comp_data["profile"]["brand_name"], "Luminara Custom")
+                    self.assertEqual(comp_data["profile"]["cdp_port"], 9333)
+                    self.assertEqual(comp_data["profile"]["extra_cli_switches"], ["--custom-test-flag"])
+
+                # 5. MCP v2 ping & notifications/cancelled return 200 / 204 cleanly
+                ping_req = urllib.request.Request(
+                    f"http://127.0.0.1:{ag_port}/api/agent/mcp",
+                    data=json.dumps({"jsonrpc": "2.0", "id": 77, "method": "ping"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(ping_req, timeout=5) as r_ping:
+                    self.assertEqual(json.loads(r_ping.read().decode("utf-8"))["result"], {})
+
+                notif_req = urllib.request.Request(
+                    f"http://127.0.0.1:{ag_port}/api/agent/mcp",
+                    data=json.dumps({"jsonrpc": "2.0", "method": "notifications/cancelled"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(notif_req, timeout=5) as r_notif:
+                    self.assertEqual(r_notif.status, 204)
             finally:
                 ag_srv.shutdown()
                 ag_srv.server_close()
@@ -212,9 +257,155 @@ class TestProductionHardeningAndAB(unittest.TestCase):
             out_md = Path(tmp) / "ab.md"
             report = run_ab_benchmark_suite(FORGE_ROOT, out_json=out_json, out_markdown=out_md)
             self.assertTrue(report["all_passed"], f"A/B Benchmark failure: {json.dumps(report, indent=2)}")
-            self.assertEqual(report["passed_count"], 4)
+            self.assertEqual(report["passed_count"], 8)
             self.assertTrue(out_json.exists())
             self.assertTrue(out_md.exists())
+
+    def test_all_ui_javascript_syntax_and_zero_innerhtml(self) -> None:
+        import re
+        import shutil
+        from forge.luminara_ui import (
+            build_luminara_newtab_html,
+            build_luminara_workspace_html,
+            write_copilot_extension,
+        )
+
+        prof = ForkProfile()
+        nt_html = build_luminara_newtab_html(prof)
+        ws_html = build_luminara_workspace_html(prof)
+        studio_html = (FORGE_ROOT / "forge" / "ui" / "index.html").read_text(encoding="utf-8")
+        cf_html = (STUDIO_ROOT / "cloudflare" / "public" / "index.html").read_text(encoding="utf-8")
+
+        for name, doc in (
+            ("newtab.html", nt_html),
+            ("workspace.html", ws_html),
+            ("forge/ui/index.html", studio_html),
+            ("cloudflare/public/index.html", cf_html),
+        ):
+            self.assertNotIn(".innerHTML", doc, f"Found .innerHTML in {name}")
+
+        node_bin = shutil.which("node")
+        if not node_bin:
+            return
+
+        with tempfile.TemporaryDirectory() as tmp:
+            w = Path(tmp)
+            cop_dir = w / "copilot"
+            nt_dir = w / "newtab_ext"
+            sh_dir = w / "shield_ext"
+            write_copilot_extension(cop_dir, prof)
+            from forge.portable import _write_offline_newtab_extension, _write_shield_extension
+            _write_offline_newtab_extension(nt_dir, prof, nt_html, ws_html)
+            _write_shield_extension(sh_dir, prof)
+            cf_inline = re.search(r"<script>(.*)</script>", cf_html, re.S)
+            cf_js = (
+                cf_inline.group(1)
+                if cf_inline
+                else (STUDIO_ROOT / "cloudflare" / "public" / "app.js").read_text(encoding="utf-8")
+            )
+            scripts = {
+                "newtab.js": re.search(r"<script>(.*)</script>", nt_html, re.S).group(1),  # type: ignore[union-attr]
+                "workspace.js": re.search(r"<script>(.*)</script>", ws_html, re.S).group(1),  # type: ignore[union-attr]
+                "studio.js": re.search(r"<script>(.*)</script>", studio_html, re.S).group(1),  # type: ignore[union-attr]
+                "cloudflare_portal.js": cf_js,
+                "sidepanel.js": (cop_dir / "sidepanel.js").read_text(encoding="utf-8"),
+                "background.js": (cop_dir / "background.js").read_text(encoding="utf-8"),
+                "palette.js": (nt_dir / "palette.js").read_text(encoding="utf-8"),
+                "newtab_bg.js": (nt_dir / "newtab_bg.js").read_text(encoding="utf-8"),
+                "farble.js": (sh_dir / "farble.js").read_text(encoding="utf-8"),
+                "webmcp_bootstrap.js": (sh_dir / "webmcp_bootstrap.js").read_text(encoding="utf-8"),
+            }
+            for fname, code in scripts.items():
+                self.assertNotIn(".innerHTML", code, f"Found .innerHTML in {fname}")
+                p = w / fname
+                p.write_text(code, encoding="utf-8")
+                proc = subprocess.run([node_bin, "--check", str(p)], capture_output=True, text=True, timeout=10)
+                self.assertEqual(proc.returncode, 0, f"JavaScript SyntaxError in {fname}: {proc.stderr}")
+
+    def test_live_end_to_end_newtab_workspace_undo_redo_and_cli_qa(self) -> None:
+        import sys
+        import time
+        from forge.cdp_client import terminate_browser_process, wait_for_cdp_page_ready
+        from forge.verifier_agentic import find_chromium_binary
+
+        prof = ForkProfile()
+        chrome_exe = find_chromium_binary(FORGE_ROOT, prof)
+        if chrome_exe is None:
+            self.skipTest("Portable chrome.exe not yet built")
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            w = Path(tmp)
+            cdp_port = _free_port()
+            ag_port = _free_port()
+            rt = LuminaraAgentRuntime(w / "state", cdp_port=cdp_port)
+            srv = create_agent_http_server(rt, host="127.0.0.1", port=ag_port)
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+            proc = subprocess.Popen(
+                [
+                    str(chrome_exe),
+                    "--headless=new",
+                    "--disable-gpu",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    f"--user-data-dir={w / 'prof'}",
+                    f"--remote-debugging-port={cdp_port}",
+                    "--remote-allow-origins=*",
+                    "--window-size=1280,900",
+                    f"http://127.0.0.1:{ag_port}/newtab",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                self.assertTrue(
+                    wait_for_cdp_page_ready(rt.cdp, "typeof syncDaemon === 'function'", timeout=20.0),
+                    "newtab.html script failed to execute",
+                )
+                time.sleep(0.35)
+                nt_state = rt.cdp.evaluate_js(
+                    None,
+                    """(() => {
+                        document.getElementById('todoInput').value = 'Live QA Task';
+                        document.getElementById('todoForm').dispatchEvent(new Event('submit', {cancelable: true}));
+                        const todos = JSON.parse(localStorage.getItem('luminara_browser:todos') || '[]');
+                        return { todoCount: todos.length, firstTodo: todos[0] ? todos[0].text : '' };
+                    })()""",
+                )
+                self.assertEqual(nt_state["firstTodo"], "Live QA Task")
+
+                rt.cdp.navigate(None, f"http://127.0.0.1:{ag_port}/workspace", settle_sec=0.4)
+                self.assertTrue(
+                    wait_for_cdp_page_ready(rt.cdp, "typeof executeEdit === 'function'", timeout=10.0),
+                    "workspace.html script failed to execute",
+                )
+                ws_state = rt.cdp.evaluate_js(
+                    None,
+                    """(() => {
+                        executeEdit('ent_001', 'Latency (ms)', '9');
+                        const afterEditMin = state.summary_bar.min;
+                        const afterEditSpread = state.summary_bar.spread_pct;
+                        undo();
+                        const afterUndoMin = state.summary_bar.min;
+                        redo();
+                        const afterRedoMin = state.summary_bar.min;
+                        return { afterEditMin, afterEditSpread, afterUndoMin, afterRedoMin };
+                    })()""",
+                )
+                self.assertEqual(ws_state["afterEditMin"], 9)
+                self.assertEqual(ws_state["afterUndoMin"], 18)
+                self.assertEqual(ws_state["afterRedoMin"], 9)
+                self.assertGreater(ws_state["afterEditSpread"], 100.0)
+
+                ctl = str((STUDIO_ROOT / "skills" / "luminara-browser" / "scripts" / "luminara_ctl.py").resolve())
+                env = {**os.environ, "LUMINARA_AGENT_URL": f"http://127.0.0.1:{ag_port}"}
+                for subcmd in (["status"], ["tabs"], ["extract", "--format", "md"], ["genui"], ["verify-ledger"]):
+                    r = subprocess.run([sys.executable, ctl, *subcmd], env=env, capture_output=True, text=True, timeout=15)
+                    self.assertEqual(r.returncode, 0, f"CLI {subcmd} failed: {r.stderr} {r.stdout}")
+            finally:
+                srv.shutdown()
+                srv.server_close()
+                terminate_browser_process(proc)
 
 
 if __name__ == "__main__":

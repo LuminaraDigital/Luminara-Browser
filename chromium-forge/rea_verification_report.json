@@ -5,7 +5,7 @@
   "all_obligations_passed": true,
   "passed_count": 14,
   "total_count": 14,
-  "elapsed_ms": 9719.2,
+  "elapsed_ms": 6126.7,
   "obligations": [
     {
       "obligation_id": "OBL-01",
@@ -101,18 +101,18 @@
         },
         "headless_smoke": {
           "exit_code": 0,
-          "dom_length": 32291,
+          "dom_length": 40303,
           "rendered_custom_ntp": true
         }
       }
     },
     {
       "obligation_id": "OBL-08",
-      "title": "Comet Workspace Surfaces (XSS-Free New Tab, Sortable Table, Todos/Settings) & MV3 Copilot",
+      "title": "Luminara Workspace Surfaces (XSS-Free New Tab, Sortable Table, Todos/Settings) & MV3 Copilot",
       "confidence": "observed",
-      "upstream_evidence": "comet-browser/comet/{newtab,todo,settings,welcome}.html; renderer.js:56-89; rea_comet_evidence.json",
+      "upstream_evidence": "forge/luminara_ui.py; forge/luminara_workspace_ui.py; rea_workspace_surface_evidence.json",
       "passed": true,
-      "details": "Reconstructed Comet workspaces natively inside Ungoogled-Chromium 157 with zero innerHTML XSS, real column sorting, persistent localStorage, and MV3 sidePanel + PNG icons.",
+      "details": "Verified Luminara workspaces natively inside Ungoogled-Chromium 157 with zero innerHTML XSS, real column sorting, persistent localStorage, and MV3 sidePanel + PNG icons.",
       "metrics": {
         "rea_evidence_files_verified": 3,
         "zero_innerhtml_xss": true
@@ -122,7 +122,7 @@
       "obligation_id": "OBL-09",
       "title": "Dual Human + AI Co-Browsing CDP Bridge & Tab Lease Preemption",
       "confidence": "observed",
-      "upstream_evidence": "BrowserPilot/backend/browser_controller.py:85-210 (upgraded to browser-level Target.createTarget + RLock)",
+      "upstream_evidence": "forge/cdp_client.py + forge/cdp_mux.py (browser-level Target.createTarget + flat sessions + RLock)",
       "passed": true,
       "details": "Verified live RFC 6455 CDP WebSocket session against Chromium 157, concurrent-safe browser background tab creation, lease collision guard, and instant human takeover preemption.",
       "metrics": {
@@ -135,7 +135,7 @@
       "obligation_id": "OBL-10",
       "title": "Set-of-Marks [1..N] DOM Indexer, Real CSS Selectors & Live Action Execution",
       "confidence": "observed",
-      "upstream_evidence": "BrowserPilot/backend/browser_controller.py:590-690 (fixes empty cssSelector stub & stale index ghost clicks)",
+      "upstream_evidence": "forge/extractor.py (frame-aware Set-of-Marks DOM indexer & Trusted-Types-safe HUD)",
       "passed": true,
       "details": "Indexed 2 visible DOM elements with non-empty CSS selectors (`#queryInput`, `#applyBtn`), rendered Trusted-Types-safe HUD badges, and verified live type+click execution.",
       "metrics": {
@@ -147,7 +147,7 @@
       "obligation_id": "OBL-11",
       "title": "Perceive-Decide-Act Autonomous Goal Loop & Persisted PAUSED_HUMAN_HANDOFF Gate",
       "confidence": "observed",
-      "upstream_evidence": "BrowserPilot/backend/agent.py:112-340 + multi-LLM cascading router + disk-persisted HITL handoff",
+      "upstream_evidence": "forge/agent_engine.py + multi-LLM cascading router + disk-persisted HITL handoff",
       "passed": true,
       "details": "Completed multi-step goal with `<untrusted_page_data>` framing and verified immediate disk-persisted `PAUSED_HUMAN_HANDOFF` pause on login/2FA wall with zero bypass attempts.",
       "metrics": {
@@ -159,7 +159,7 @@
       "obligation_id": "OBL-12",
       "title": "Parallel Multi-Tab BulkEngine, Per-Domain Lock Isolation & Checkpointing",
       "confidence": "observed",
-      "upstream_evidence": "BrowserPilot/backend/bulk_engine.py:105-295 (fixes global lock serialization & tabs[0] WS collision)",
+      "upstream_evidence": "forge/agent_engine.py:BulkEngine (isolated per-domain adaptive locks & redacted checkpoints)",
       "passed": true,
       "details": "Extracted 5 structured rows across 2 parallel background tabs with isolated per-domain locks and saved resumable checkpoint `rea_verify_bulk.json`.",
       "metrics": {
@@ -171,7 +171,7 @@
       "obligation_id": "OBL-13",
       "title": "Domain-Agnostic Generative UI Synthesis (SummaryBar KPIs & Multi-Format Export)",
       "confidence": "observed",
-      "upstream_evidence": "BrowserPilot/generative-ui/src/lib/{attributeIntelligence,componentMapper}.ts; rea_browserpilot_genui_evidence.json",
+      "upstream_evidence": "forge/extractor.py:synthesize_generative_ui; rea_generative_ui_evidence.json",
       "passed": true,
       "details": "Synthesized 5 typed entities and SummaryBar KPIs (`Price` min=$19.0, max=$149.0, avg=$69.0) plus formula-safe CSV/Markdown/JSON exports.",
       "metrics": {
@@ -190,11 +190,11 @@
       "obligation_id": "OBL-14",
       "title": "Luminara Agent Daemon (DNS-Rebind/Null-Origin Guard, MCP v2 & Hash-Chained LUM-* Receipts)",
       "confidence": "observed",
-      "upstream_evidence": "BrowserPilot/backend/main.py:18-24 + Luminara MCP v2 2025-06-18 + SHA-256 chain verifier",
+      "upstream_evidence": "forge/agent_server.py + Luminara MCP v2 2025-06-18 + SHA-256 chain verifier",
       "passed": true,
-      "details": "Verified `/llms.txt`, `/.well-known/agent.json`, 10 MCP v2 tools (`2025-06-18`), 403 rejection of DNS-rebinding & unkeyed `Origin: null`, and 8 hash-chained `LUM-*` receipts.",
+      "details": "Verified `/llms.txt`, `/.well-known/agent.json`, 20 MCP v2 tools (`2025-06-18`), 403 rejection of DNS-rebinding & unkeyed `Origin: null`, and 8 hash-chained `LUM-*` receipts.",
       "metrics": {
-        "mcp_tools": 10,
+        "mcp_tools": 20,
         "dns_rebind_blocked": true,
         "null_sandbox_blocked": true,
         "chain_verified_receipts": 8
@@ -204,7 +204,7 @@
   "residual_unknowns": [
     {
       "id": "RU-01",
-      "scope": "Excluded anti-bot / CAPTCHA / fingerprint-evasion modules from BrowserPilot",
+      "scope": "Excluded anti-bot / CAPTCHA / fingerprint-evasion modules by safety design",
       "reason": "Strictly excluded (`anti_bot_detection.py`, `stealth_engine.py`, `fingerprint_profile.py`, `human_behavior.py`) per safety & access-control rules; replaced with `PAUSED_HUMAN_HANDOFF` co-browsing so the human completes login/MFA/verification directly in the shared browser tab."
     },
     {

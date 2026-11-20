@@ -42,8 +42,8 @@
     main { display: grid; gap: 24px; margin-block: clamp(1.5rem, 4vw, 3rem); }
     .kicker { font: 600 11px/1.2 var(--font-mono); letter-spacing: 0.11em; text-transform: uppercase; color: var(--accent); }
     h1 {
-      font-size: clamp(2rem, 4.5vw, 3.6rem);
-      letter-spacing: -0.04em; line-height: 1.03; text-wrap: balance; max-width: 18ch;
+      font-size: clamp(1.85rem, 3.4vw, 2.8rem);
+      letter-spacing: -0.04em; line-height: 1.05; text-wrap: balance; max-width: 18ch;
     }
     .lede { color: var(--ink-1); max-width: 64ch; text-wrap: pretty; font-size: clamp(0.96rem, 1.1vw, 1.1rem); }
     .cta-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
@@ -76,13 +76,16 @@
       background: var(--bg-2); border: 1px solid var(--hairline); border-radius: 10px;
       padding: 12px; overflow-x: auto; font: 11.5px/1.5 var(--font-mono); color: var(--ink-0);
     }
-    input[type="range"] { width: 100%; accent-color: oklch(0.75 0.16 162); }
+    input[type="range"] { width: 100%; accent-color: var(--accent); }
     .mono { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+    }
   </style>
 </head>
 <body>
   <header>
-    <span>● LUMINARA BROWSER v2.1 · UNGOOGLED-CHROMIUM 157.0.8103.78</span>
+    <span>● LUMINARA BROWSER v3.0.0 · UNGOOGLED-CHROMIUM 157.0.8103.78</span>
     <nav style="display:flex;gap:12px;flex-wrap:wrap;">
       <a href="/llms.txt" style="color:inherit;">/llms.txt</a>
       <a href="/.well-known/agent.json" style="color:inherit;">/.well-known/agent.json</a>
@@ -92,16 +95,16 @@
   </header>
 
   <main>
-    <section style="display:grid;gap:14px;">
-      <div class="kicker">ZERO GOOGLE TELEMETRY · LOOPBACK CDP :9229 · MCP v2 :8796</div>
+    <section style="display:grid;gap:14px;min-width:0;">
+      <div class="kicker">ZERO GOOGLE TELEMETRY · MULTIPLEXED CDP :9229 · 20-TOOL MCP v2 :8796</div>
       <h1>One live browser window. Humans and AI agents simultaneously.</h1>
       <p class="lede">
-        Luminara Browser fuses 134 Ungoogled-Chromium privacy patches with native Set-of-Marks DOM indexing,
-        per-domain parallel Bulk extraction, a 50-slot Undo/Redo Generative UI Studio, and SHA-256 hash-chained
-        <code>LUM-*</code> receipts.
+        Luminara Browser fuses 134 Ungoogled-Chromium privacy patches with Set-of-Marks &amp; AXTree perception,
+        an origin-pinned DPAPI/AEAD Model-Blind Vault, AST Pipeline Sandbox, Domain Playbooks, W3C WebMCP,
+        per-domain parallel Bulk extraction, and SHA-256 + HMAC signed <code>LUM-*</code> receipts.
       </p>
       <div class="cta-row">
-        <a class="btn primary" href="https://github.com/luminara-digital/luminara-browser/releases/latest">⬇ Download Windows x64 Portable</a>
+        <a class="btn primary" id="btnDownloadRelease" href="https://github.com/LuminaraDigital/Luminara-Browser/releases/latest">⬇ Download Windows x64 Portable</a>
         <button class="btn" type="button" id="btnCopyMcp">Copy MCP v2 Config</button>
         <a class="btn" href="/llms-full.txt">Read Agent Spec</a>
       </div>
@@ -109,19 +112,19 @@
 
     <div class="bento">
       <section class="card span-7">
-        <div class="kicker">VERIFIED PRODUCTION TELEMETRY (14/14 REA GATE · 4/4 A/B SUITE)</div>
+        <div class="kicker">VERIFIED PRODUCTION TELEMETRY (14/14 REA · 8/8 A/B · 6/6 100x SUITE)</div>
         <div class="metrics">
-          <div class="metric-box"><div class="metric-val">-96.7%</div><div class="metric-lbl">Prompt Tokens</div></div>
-          <div class="metric-box"><div class="metric-val">4.54×</div><div class="metric-lbl">Bulk Speedup</div></div>
+          <div class="metric-box"><div class="metric-val">-96.8%</div><div class="metric-lbl">Prompt Tokens</div></div>
+          <div class="metric-box"><div class="metric-val">9.94×</div><div class="metric-lbl">Mux CDP Speedup</div></div>
           <div class="metric-box"><div class="metric-val">0 req</div><div class="metric-lbl">Google Calls</div></div>
-          <div class="metric-box"><div class="metric-val">14/14</div><div class="metric-lbl">REA Parity</div></div>
+          <div class="metric-box"><div class="metric-val">20</div><div class="metric-lbl">MCP v2 Tools</div></div>
         </div>
 
         <label for="pageSlider" class="mono" style="margin-top:4px;">
           Interactive Token Calculator: <strong id="pageCountOut">12</strong> multi-tab pages
         </label>
         <input id="pageSlider" type="range" min="1" max="50" value="12" />
-        <div class="mono" id="tokenCalcOut">Raw HTML: 29,004 tokens vs Luminara Set-of-Marks: 948 tokens (28,056 tokens saved)</div>
+        <div class="mono" id="tokenCalcOut" role="status" aria-live="polite">Raw HTML: 29,484 tokens vs Luminara Set-of-Marks: 948 tokens (28,536 tokens saved)</div>
       </section>
 
       <section class="card span-5">
@@ -133,7 +136,8 @@
     }
   }
 }</pre>
-        <div class="mono" id="copyStatus">Works with Claude Code, Antigravity, Hermes Agent, and Cursor. Login &amp; 2FA walls pause cleanly via <code>PAUSED_HUMAN_HANDOFF</code>.</div>
+        <div class="mono" id="copyStatus" role="status" aria-live="polite">Compatible with any standard MCP v2 (`2025-06-18`) client. Login &amp; 2FA walls pause cleanly via <code>PAUSED_HUMAN_HANDOFF</code>.</div>
+        <div class="mono" id="edgeHealthBadge" role="status" aria-live="polite" style="margin-top:6px;">Checking edge telemetry...</div>
       </section>
     </div>
   </main>
@@ -143,25 +147,6 @@
     <span>Hash-Chained Receipts: <code>LUM-&lt;unix_ms&gt;-&lt;sha256&gt;</code></span>
   </footer>
 
-  <script>
-    const slider = document.getElementById('pageSlider');
-    const countOut = document.getElementById('pageCountOut');
-    const calcOut = document.getElementById('tokenCalcOut');
-    function updateCalc() {
-      const n = Number(slider.value);
-      countOut.textContent = String(n);
-      const raw = n * 2417;
-      const som = n * 79;
-      calcOut.textContent = `Raw HTML: ${raw.toLocaleString()} tokens vs Luminara Set-of-Marks: ${som.toLocaleString()} tokens (${(raw - som).toLocaleString()} tokens saved)`;
-    }
-    slider.addEventListener('input', updateCalc);
-    document.getElementById('btnCopyMcp').addEventListener('click', async () => {
-      const txt = document.getElementById('mcpSnippet').textContent;
-      try {
-        await navigator.clipboard.writeText(txt);
-        document.getElementById('copyStatus').textContent = 'Copied MCP v2 configuration to clipboard.';
-      } catch (_e) {}
-    });
-  </script>
+  <script src="/app.js" defer></script>
 </body>
 </html>

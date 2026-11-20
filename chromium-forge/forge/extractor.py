@@ -14,14 +14,80 @@ from html.parser import HTMLParser
 import io
 import json
 import re
+import time
 from typing import Any
+
+DIALOG_SUPERVISOR_INIT_JS = r"""
+(() => {
+  if (!window.__luminaraDialogSupervisor) {
+    const sup = {
+      pending: [],
+      recent: [],
+      queuedResponses: [],
+      defaultAccept: true,
+      defaultPrompt: '',
+      nextSeq: 1,
+      hookWindow(win) {
+        if (!win || win.__luminaraDialogHooked) return;
+        try {
+          win.__luminaraDialogHooked = true;
+          win.alert = function(msg) { return recordAndResolve('alert', msg, ''); };
+          win.confirm = function(msg) { return recordAndResolve('confirm', msg, ''); };
+          win.prompt = function(msg, defVal) { return recordAndResolve('prompt', msg, defVal); };
+        } catch (_e) {}
+      }
+    };
+    function recordAndResolve(type, message, defaultPrompt) {
+      const id = 'dlg_' + (sup.nextSeq++);
+      const queued = sup.queuedResponses.length > 0 ? sup.queuedResponses.shift() : null;
+      const entry = {
+        id,
+        type: String(type || 'alert'),
+        message: String(message == null ? '' : message).slice(0, 500),
+        default_prompt: String(defaultPrompt == null ? '' : defaultPrompt).slice(0, 200),
+        timestamp_ms: Date.now()
+      };
+      if (queued) {
+        entry.resolved_action = queued.action;
+        entry.prompt_text = queued.prompt_text || '';
+        sup.recent.push(entry);
+        if (sup.recent.length > 20) sup.recent.shift();
+        if (type === 'alert') return undefined;
+        if (type === 'confirm') return queued.action === 'accept';
+        if (type === 'prompt') return queued.action === 'accept' ? String(queued.prompt_text || entry.default_prompt) : null;
+        return undefined;
+      }
+      sup.pending.push(entry);
+      if (sup.pending.length > 20) sup.pending.shift();
+      if (type === 'alert') return undefined;
+      if (type === 'confirm') return Boolean(sup.defaultAccept);
+      if (type === 'prompt') return sup.defaultAccept ? String(sup.defaultPrompt || entry.default_prompt) : null;
+      return undefined;
+    }
+    sup.hookWindow(window);
+    window.__luminaraDialogSupervisor = sup;
+  }
+})();
+"""
 
 DOM_SNAPSHOT_JS_TEMPLATE = r"""
 (() => {
   const showBadges = __SHOW_BADGES__;
   const agentLabel = __AGENT_LABEL__;
+  """ + DIALOG_SUPERVISOR_INIT_JS + r"""
+  const sup = window.__luminaraDialogSupervisor;
   document.querySelectorAll('.__luminara_som_badge, #__luminara_agent_hud').forEach(e => e.remove());
   document.querySelectorAll('[data-luminara-idx]').forEach(e => e.removeAttribute('data-luminara-idx'));
+  Array.from(document.querySelectorAll('iframe')).forEach(fr => {
+    try {
+      if (fr.contentDocument) {
+        fr.contentDocument.querySelectorAll('.__luminara_som_badge, #__luminara_agent_hud').forEach(e => e.remove());
+        fr.contentDocument.querySelectorAll('[data-luminara-idx]').forEach(e => e.removeAttribute('data-luminara-idx'));
+      }
+      if (fr.contentWindow && sup && sup.hookWindow) sup.hookWindow(fr.contentWindow);
+    } catch (_e) {}
+  });
+  const cleanOuterHtml = document.documentElement ? document.documentElement.outerHTML.slice(0, 250000) : '';
 
   function cssPath(el) {
     if (el.id && /^[a-zA-Z][\w-]*$/.test(el.id)) return '#' + CSS.escape(el.id);
@@ -50,62 +116,81 @@ DOM_SNAPSHOT_JS_TEMPLATE = r"""
     '[contenteditable="true"]', '[onclick]'
   ].join(',');
 
-  const candidates = Array.from(document.querySelectorAll(interactiveSel));
+  const candidateContexts = [{ doc: document, win: window, offsetX: 0, offsetY: 0, frameSelector: '' }];
+  Array.from(document.querySelectorAll('iframe')).slice(0, 12).forEach(fr => {
+    try {
+      if (fr.contentDocument && fr.contentWindow) {
+        const frRect = fr.getBoundingClientRect();
+        if (frRect.width >= 8 && frRect.height >= 8) {
+          candidateContexts.push({
+            doc: fr.contentDocument,
+            win: fr.contentWindow,
+            offsetX: frRect.left,
+            offsetY: frRect.top,
+            frameSelector: cssPath(fr)
+          });
+        }
+      }
+    } catch (_e) {}
+  });
+
   const elements = [];
   let idx = 1;
 
-  for (const el of candidates) {
-    if (idx > 80) break;
-    if (el.getAttribute('aria-hidden') === 'true') continue;
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 4 || rect.height < 4) continue;
-    const style = window.getComputedStyle(el);
-    if (style.visibility === 'hidden' || style.display === 'none' || parseFloat(style.opacity || '1') === 0) continue;
-    const inViewport = rect.bottom >= 0 && rect.right >= 0 && rect.top <= window.innerHeight && rect.left <= window.innerWidth;
-    if (!inViewport) continue;
+  for (const ctx of candidateContexts) {
+    const candidates = Array.from(ctx.doc.querySelectorAll(interactiveSel));
+    for (const el of candidates) {
+      if (idx > 80) break;
+      if (el.closest('[aria-hidden="true"], [hidden]')) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 4 || rect.height < 4) continue;
+      const style = ctx.win.getComputedStyle(el);
+      if (
+        style.visibility === 'hidden' ||
+        style.display === 'none' ||
+        parseFloat(style.opacity || '1') === 0 ||
+        parseFloat(style.fontSize || '12') === 0
+      ) continue;
+      const absLeft = rect.left + ctx.offsetX;
+      const absTop = rect.top + ctx.offsetY;
+      const absRight = rect.right + ctx.offsetX;
+      const absBottom = rect.bottom + ctx.offsetY;
+      const inViewport = absBottom >= 0 && absRight >= 0 && absTop <= window.innerHeight && absLeft <= window.innerWidth;
+      if (!inViewport) continue;
 
-    el.setAttribute('data-luminara-idx', String(idx));
-    const tag = el.tagName.toLowerCase();
-    const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('title') || '').trim().replace(/\s+/g, ' ').slice(0, 90);
-    elements.push({
-      index: idx,
-      tag,
-      type: el.getAttribute('type') || '',
-      role: el.getAttribute('role') || tag,
-      text,
-      href: el.getAttribute('href') || '',
-      placeholder: el.getAttribute('placeholder') || '',
-      selector: cssPath(el),
-      x: Math.round(rect.left + rect.width / 2),
-      y: Math.round(rect.top + rect.height / 2),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
-      is_input: ['input', 'textarea', 'select'].includes(tag) || el.isContentEditable
-    });
+      el.setAttribute('data-luminara-idx', String(idx));
+      const tag = el.tagName.toLowerCase();
+      const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('title') || '').trim().replace(/\s+/g, ' ').slice(0, 90);
+      const localSel = cssPath(el);
+      elements.push({
+        index: idx,
+        tag,
+        type: el.getAttribute('type') || '',
+        role: el.getAttribute('role') || tag,
+        text,
+        href: el.getAttribute('href') || '',
+        placeholder: el.getAttribute('placeholder') || '',
+        selector: ctx.frameSelector ? `${ctx.frameSelector} >>> ${localSel}` : localSel,
+        frame_selector: ctx.frameSelector || '',
+        x: Math.round(absLeft + rect.width / 2),
+        y: Math.round(absTop + rect.height / 2),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        is_input: ['input', 'textarea', 'select'].includes(tag) || el.isContentEditable
+      });
 
-    if (showBadges) {
-      const badge = document.createElement('div');
-      badge.className = '__luminara_som_badge';
-      badge.textContent = String(idx);
-      badge.style.cssText = `position:fixed;left:${Math.max(0, Math.round(rect.left))}px;top:${Math.max(0, Math.round(rect.top) - 16)}px;z-index:2147483646;background:#10b981;color:#06110c;font:700 10px/1.2 Consolas,monospace;padding:1px 5px;border-radius:4px;pointer-events:none;box-shadow:0 2px 6px rgba(0,0,0,0.45);`;
-      document.documentElement.appendChild(badge);
+      if (showBadges && document.documentElement) {
+        const badge = document.createElement('div');
+        badge.className = '__luminara_som_badge';
+        badge.textContent = String(idx);
+        badge.style.cssText = `position:fixed;left:${Math.max(0, Math.round(absLeft))}px;top:${Math.max(0, Math.round(absTop) - 16)}px;z-index:2147483646;background:#10b981;color:#06110c;font:700 10px/1.2 Consolas,monospace;padding:1px 5px;border-radius:4px;pointer-events:none;box-shadow:0 2px 6px rgba(0,0,0,0.45);`;
+        document.documentElement.appendChild(badge);
+      }
+      idx++;
     }
-    idx++;
   }
 
-  if (showBadges && agentLabel) {
-    const hud = document.createElement('div');
-    hud.id = '__luminara_agent_hud';
-    hud.style.cssText = 'position:fixed;bottom:14px;right:14px;z-index:2147483647;background:rgba(15,18,25,0.92);color:#ecfdf5;border:1px solid rgba(16,185,129,0.55);border-radius:999px;padding:6px 12px;font:600 11px/1.2 -apple-system,Segoe UI,sans-serif;display:flex;align-items:center;gap:8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);backdrop-filter:blur(8px);';
-    const dot = document.createElement('span');
-    dot.style.cssText = 'width:7px;height:7px;border-radius:50%;background:#10b981;box-shadow:0 0 8px #10b981;';
-    const lbl = document.createElement('span');
-    lbl.textContent = `${agentLabel} · ${elements.length} targets indexed`;
-    hud.append(dot, lbl);
-    document.documentElement.appendChild(hud);
-  }
-
-  // Detect standard authentication / human verification gates (never bypass — report for HITL handoff!)
+  // Detect standard authentication / human verification gates before HUD injection (never bypass — report for HITL handoff!)
   const bodyLower = (document.body ? document.body.innerText : '').slice(0, 4000).toLowerCase();
   const hasPasswordInput = Boolean(document.querySelector('input[type="password"]'));
   const hasChallengeFrame = Boolean(
@@ -118,13 +203,29 @@ DOM_SNAPSHOT_JS_TEMPLATE = r"""
     gateType = 'login_or_mfa_wall';
   }
 
+  if (showBadges && agentLabel && document.documentElement) {
+    const hud = document.createElement('div');
+    hud.id = '__luminara_agent_hud';
+    hud.style.cssText = 'position:fixed;bottom:14px;right:14px;z-index:2147483647;background:rgba(15,18,25,0.92);color:#ecfdf5;border:1px solid rgba(16,185,129,0.55);border-radius:999px;padding:6px 12px;font:600 11px/1.2 -apple-system,Segoe UI,sans-serif;display:flex;align-items:center;gap:8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);backdrop-filter:blur(8px);';
+    const dot = document.createElement('span');
+    dot.style.cssText = 'width:7px;height:7px;border-radius:50%;background:#10b981;box-shadow:0 0 8px #10b981;';
+    const lbl = document.createElement('span');
+    lbl.textContent = `${agentLabel} · ${elements.length} targets indexed`;
+    hud.append(dot, lbl);
+    document.documentElement.appendChild(hud);
+  }
+
+  const supOut = window.__luminaraDialogSupervisor || { pending: [], recent: [] };
   return {
     url: location.href,
     title: document.title,
+    origin: location.origin,
     viewport: { width: window.innerWidth, height: window.innerHeight, scrollY: Math.round(window.scrollY) },
     gate_detected: gateType,
+    pending_dialogs: supOut.pending.slice(-10),
+    recent_dialogs: supOut.recent.slice(-10),
     elements,
-    outer_html: document.documentElement ? document.documentElement.outerHTML.slice(0, 250000) : ''
+    outer_html: cleanOuterHtml
   };
 })()
 """
@@ -136,20 +237,72 @@ def build_dom_snapshot_js(show_badges: bool = True, agent_label: str = "Luminara
     ).replace("__AGENT_LABEL__", json.dumps(str(agent_label)[:64]))
 
 
+def build_dialog_control_js(action: str = "status", prompt_text: str = "", dialog_id: str | None = None) -> str:
+    """Build in-page script to inspect, accept, dismiss, or pre-queue JS dialog responses."""
+    return f"""
+(() => {{
+  {DIALOG_SUPERVISOR_INIT_JS}
+  const sup = window.__luminaraDialogSupervisor;
+  Array.from(document.querySelectorAll('iframe')).forEach(fr => {{
+    try {{ if (fr.contentWindow && sup.hookWindow) sup.hookWindow(fr.contentWindow); }} catch (_e) {{}}
+  }});
+  const act = {json.dumps(action)};
+  const pText = {json.dumps(prompt_text)};
+  const dlgId = {json.dumps(dialog_id)};
+  if (act === 'status') {{
+    return {{ ok: true, pending_dialogs: sup.pending.slice(), recent_dialogs: sup.recent.slice() }};
+  }}
+  if (act === 'accept' || act === 'dismiss') {{
+    sup.defaultAccept = (act === 'accept');
+    if (pText !== '') sup.defaultPrompt = pText;
+    let resolved = null;
+    if (sup.pending.length > 0) {{
+      const idx = dlgId ? sup.pending.findIndex(d => d.id === dlgId) : 0;
+      if (idx >= 0) {{
+        resolved = sup.pending.splice(idx, 1)[0];
+        resolved.resolved_action = act;
+        resolved.prompt_text = pText;
+        sup.recent.push(resolved);
+        if (sup.recent.length > 20) sup.recent.shift();
+      }}
+    }}
+    if (!resolved || pText !== '') {{
+      sup.queuedResponses.push({{ action: act, prompt_text: pText }});
+      if (sup.queuedResponses.length > 10) sup.queuedResponses.shift();
+    }}
+    return {{
+      ok: true,
+      action: act,
+      resolved_dialog: resolved,
+      pending_dialogs: sup.pending.slice(),
+      recent_dialogs: sup.recent.slice(-10)
+    }};
+  }}
+  return {{ ok: false, error: 'Unsupported dialog action: ' + act }};
+}})()
+"""
+
+
 def build_dom_action_js(action: str, index: int | None = None, selector: str | None = None, text: str = "") -> str:
-    """Build safe in-page DOM action script (click, type, select, scroll, clear_hud) with cursor pulse."""
+    """Build safe in-page DOM action script (click, type, select, scroll, clear_hud) with same-origin iframe traversal."""
     safe_idx = int(index) if index is not None else None
-    target_expr = (
-        f"document.querySelector('[data-luminara-idx=\"{safe_idx}\"]')"
-        if safe_idx is not None
-        else f"document.querySelector({json.dumps(selector or '')})"
-    )
+    raw_sel = selector or ""
     return f"""
 (() => {{
   const act = {json.dumps(action)};
+  const targetIdx = {json.dumps(safe_idx)};
+  const rawSel = {json.dumps(raw_sel)};
   if (act === 'clear_hud') {{
     document.querySelectorAll('.__luminara_som_badge, #__luminara_agent_hud').forEach(e => e.remove());
     document.querySelectorAll('[data-luminara-idx]').forEach(e => e.removeAttribute('data-luminara-idx'));
+    Array.from(document.querySelectorAll('iframe')).forEach(fr => {{
+      try {{
+        if (fr.contentDocument) {{
+          fr.contentDocument.querySelectorAll('.__luminara_som_badge, #__luminara_agent_hud').forEach(e => e.remove());
+          fr.contentDocument.querySelectorAll('[data-luminara-idx]').forEach(e => e.removeAttribute('data-luminara-idx'));
+        }}
+      }} catch (_e) {{}}
+    }});
     return {{ ok: true, action: 'clear_hud' }};
   }}
   if (act === 'scroll') {{
@@ -157,38 +310,73 @@ def build_dom_action_js(action: str, index: int | None = None, selector: str | N
     return {{ ok: true, action: 'scroll', scrollY: Math.round(window.scrollY) }};
   }}
   let el = null;
+  let ownerWin = window;
+  let offsetX = 0;
+  let offsetY = 0;
   try {{
-    el = {target_expr};
+    if (targetIdx !== null) {{
+      const idxAttr = `[data-luminara-idx="${{targetIdx}}"]`;
+      el = document.querySelector(idxAttr);
+      if (!el) {{
+        for (const fr of Array.from(document.querySelectorAll('iframe'))) {{
+          try {{
+            if (fr.contentDocument) {{
+              const found = fr.contentDocument.querySelector(idxAttr);
+              if (found) {{
+                const frRect = fr.getBoundingClientRect();
+                el = found;
+                ownerWin = fr.contentWindow || window;
+                offsetX = frRect.left;
+                offsetY = frRect.top;
+                break;
+              }}
+            }}
+          }} catch (_e) {{}}
+        }}
+      }}
+    }} else if (rawSel.includes(' >>> ')) {{
+      const [frSel, innerSel] = rawSel.split(' >>> ', 2);
+      const fr = document.querySelector(frSel);
+      if (fr && fr.contentDocument) {{
+        const frRect = fr.getBoundingClientRect();
+        el = fr.contentDocument.querySelector(innerSel);
+        ownerWin = fr.contentWindow || window;
+        offsetX = frRect.left;
+        offsetY = frRect.top;
+      }}
+    }} else {{
+      el = document.querySelector(rawSel);
+    }}
   }} catch (err) {{
     return {{ ok: false, error: 'Invalid CSS selector: ' + String(err) }};
   }}
   if (!el) return {{ ok: false, error: 'Target element not found in live DOM' }};
   el.scrollIntoView({{ block: 'center', inline: 'center', behavior: 'instant' }});
   const rect = el.getBoundingClientRect();
+  const absLeft = rect.left + offsetX;
+  const absTop = rect.top + offsetY;
 
   const ring = document.createElement('div');
-  ring.style.cssText = `position:fixed;left:${{rect.left - 4}}px;top:${{rect.top - 4}}px;width:${{rect.width + 8}}px;height:${{rect.height + 8}}px;border:2px solid #10b981;border-radius:8px;z-index:2147483647;pointer-events:none;transition:opacity 0.45s ease;`;
+  ring.style.cssText = `position:fixed;left:${{absLeft - 4}}px;top:${{absTop - 4}}px;width:${{rect.width + 8}}px;height:${{rect.height + 8}}px;border:2px solid #10b981;border-radius:8px;z-index:2147483647;pointer-events:none;transition:opacity 0.45s ease;`;
   document.documentElement.appendChild(ring);
   setTimeout(() => {{ ring.style.opacity = '0'; setTimeout(() => ring.remove(), 450); }}, 350);
 
   if (act === 'click') {{
     el.focus();
     el.click();
-    return {{ ok: true, action: 'click', tag: el.tagName.toLowerCase(), x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }};
+    return {{ ok: true, action: 'click', tag: el.tagName.toLowerCase(), x: Math.round(absLeft + rect.width / 2), y: Math.round(absTop + rect.height / 2) }};
   }}
   if (act === 'type' || act === 'select') {{
     el.focus();
     const val = {json.dumps(text)};
-    if (el.tagName === 'SELECT') {{
-      el.value = val;
-    }} else {{
-      const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
-      const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-      if (desc && desc.set) desc.set.call(el, val);
-      else el.value = val;
-    }}
-    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+    const proto = el.tagName === 'SELECT'
+      ? ownerWin.HTMLSelectElement.prototype
+      : (el.tagName === 'TEXTAREA' ? ownerWin.HTMLTextAreaElement.prototype : ownerWin.HTMLInputElement.prototype);
+    const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (desc && desc.set) desc.set.call(el, val);
+    else el.value = val;
+    el.dispatchEvent(new ownerWin.Event('input', {{ bubbles: true }}));
+    el.dispatchEvent(new ownerWin.Event('change', {{ bubbles: true }}));
     return {{ ok: true, action: act, length: val.length }};
   }}
   return {{ ok: false, error: 'Unsupported DOM action: ' + act }};
@@ -196,15 +384,25 @@ def build_dom_action_js(action: str, index: int | None = None, selector: str | N
 """
 
 
+_HIDDEN_STYLE_RE = re.compile(
+    r"(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden|"
+    r"opacity\s*:\s*0(?:\.0+)?(?:\s*;|\s*$)|font-size\s*:\s*0(?:px|em|rem|pt|%)?(?:\s*;|\s*$))",
+    re.IGNORECASE,
+)
+
+
 class _StructuredDOMParser(HTMLParser):
     """Pure-stdlib clean-room HTML structure extractor preserving inline text inside blocks."""
 
     SKIP_TAGS = frozenset({"script", "style", "noscript", "svg", "template", "iframe"})
+    VOID_TAGS = frozenset(
+        {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+    )
     BLOCK_TEXT_TAGS = frozenset({"title", "h1", "h2", "h3", "h4", "p"})
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self._skip_depth = 0
+        self._skip_stack: list[str] = []
         self._active_block = ""
         self._buf: list[str] = []
         self.title = ""
@@ -227,25 +425,26 @@ class _StructuredDOMParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         t = tag.lower()
-        if t in self.SKIP_TAGS:
-            self._skip_depth += 1
+        if self._skip_stack:
+            if t not in self.VOID_TAGS:
+                self._skip_stack.append(t)
             return
-        if self._skip_depth > 0:
+
+        if t in self.SKIP_TAGS:
+            if t not in self.VOID_TAGS:
+                self._skip_stack.append(t)
             return
 
         attr_map = {k.lower(): (v or "") for k, v in attrs}
-        # Prune elements explicitly marked hidden in HTML attributes (defends against hidden DOM prompt injection!)
-        style_low = attr_map.get("style", "").lower().replace(" ", "")
+        # Prune elements explicitly marked hidden in HTML attributes (defends against nested DOM prompt injection!)
+        style_raw = attr_map.get("style", "")
         if (
             "hidden" in attr_map
             or attr_map.get("aria-hidden", "").lower() == "true"
-            or "display:none" in style_low
-            or "visibility:hidden" in style_low
-            or "opacity:0" in style_low
-            or "font-size:0" in style_low
+            or (style_raw and _HIDDEN_STYLE_RE.search(style_raw))
         ):
-            self._skip_depth += 1
-            self._hidden_tag_stack.append(t)
+            if t not in self.VOID_TAGS:
+                self._skip_stack.append(t)
             return
 
         if t == "meta" and attr_map.get("name", "").lower() == "description":
@@ -270,14 +469,8 @@ class _StructuredDOMParser(HTMLParser):
             self._in_li = True
             self._li_buf = []
 
-    @property
-    def _hidden_tag_stack(self) -> list[str]:
-        if not hasattr(self, "_hidden_stack_list"):
-            self._hidden_stack_list: list[str] = []
-        return self._hidden_stack_list
-
     def handle_data(self, data: str) -> None:
-        if self._skip_depth > 0:
+        if self._skip_stack:
             return
         if self._active_block:
             self._buf.append(data)
@@ -290,14 +483,14 @@ class _StructuredDOMParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         t = tag.lower()
-        if t in self.SKIP_TAGS:
-            self._skip_depth = max(0, self._skip_depth - 1)
+        if t in self.VOID_TAGS:
             return
-        if self._hidden_tag_stack and self._hidden_tag_stack[-1] == t:
-            self._hidden_tag_stack.pop()
-            self._skip_depth = max(0, self._skip_depth - 1)
-            return
-        if self._skip_depth > 0:
+        if self._skip_stack:
+            if self._skip_stack[-1] == t:
+                self._skip_stack.pop()
+            elif t in self._skip_stack:
+                while self._skip_stack and self._skip_stack.pop() != t:
+                    pass
             return
 
         if t == self._active_block:
@@ -474,6 +667,7 @@ def synthesize_generative_ui(rows: list[dict[str, Any]], title: str = "Extracted
     recommended_view = "table" if len(entities) >= 4 else ("comparison" if len(entities) >= 2 else "stack")
     return {
         "title": title,
+        "generated_at": int(time.time() * 1000),
         "entity_count": len(entities),
         "recommended_view": recommended_view,
         "summary_bar": summary_bar,

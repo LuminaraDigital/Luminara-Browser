@@ -28,18 +28,26 @@ jobs:
           $url = "https://github.com/ungoogled-software/ungoogled-chromium-windows/releases/download/157.0.8103.50-1.1/ungoogled-chromium_157.0.8103.50-1.1_windows_x64.zip"
           curl.exe -fL --retry 3 -o "chromium-forge/cache/ungoogled-chromium_157.0.8103.50-1.1_windows_x64.zip" $url
 
-      - name: Assemble portable Luminara Browser & run 14-obligation REA + A/B gates
+      - name: Assemble portable Luminara Browser & run unit, REA, A/B & 100x gates
         shell: pwsh
         working-directory: chromium-forge
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          LUMINARA_RELEASE_KEY_HEX: ${{ secrets.LUMINARA_RELEASE_KEY_HEX }}
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
+          python -m forge verify-upstream-patches
           python -m forge build-portable
+          python -W error -m unittest discover -s tests -v
           python -m forge verify-rea
           python -m forge benchmark
+          python -m forge benchmark-100x
           Compress-Archive -Path "dist/luminara-browser-win64/*" -DestinationPath "dist/Luminara-Browser-win64-portable.zip" -Force
           $hash = (Get-FileHash "dist/Luminara-Browser-win64-portable.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  Luminara-Browser-win64-portable.zip" | Out-File -Encoding utf8 "dist/SHA256SUMS.txt"
+          python -c "import hashlib, json, os; from pathlib import Path; import forge; from forge.updater import canonical_manifest_bytes, sign_release_manifest; ref = (os.environ.get('GITHUB_REF_NAME') or '').lstrip('v'); ver = ref if ref and ref[0].isdigit() else forge.__version__; m={'version':ver,'chromium_version':'157.0.8103.78-1.1','portable_binary_base':'157.0.8103.50-1.1','artifact_name':'Luminara-Browser-win64-portable.zip','artifact_sha256':'$hash'}; k=os.environ.get('LUMINARA_RELEASE_KEY_HEX','').strip(); m=sign_release_manifest(m,bytes.fromhex(k)) if len(k)>=64 else {**m,'manifest_sha256':hashlib.sha256(canonical_manifest_bytes(m)).hexdigest()}; Path('dist/release-manifest.json').write_text(json.dumps(m,indent=2)+'\n', encoding='utf-8')"
+          python -m forge check-updates --manifest dist/release-manifest.json --artifact dist/Luminara-Browser-win64-portable.zip --allow-unsigned
 
       - name: Publish GitHub Release Assets
         if: startsWith(github.ref, 'refs/tags/v')
@@ -48,3 +56,4 @@ jobs:
           files: |
             chromium-forge/dist/Luminara-Browser-win64-portable.zip
             chromium-forge/dist/SHA256SUMS.txt
+            chromium-forge/dist/release-manifest.json

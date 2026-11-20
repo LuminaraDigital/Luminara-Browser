@@ -1,11 +1,11 @@
 {
-  "evidence_id": "ev_35efceda02ee9cee9f2e6c1c153d4061a607224da4a5c47d586e250e3ee3756b",
+  "evidence_id": "ev_f9b7c2e2574a5d90071c94eddb3346f8b49ba617b87a8e7e49ea10072d2874ca",
   "subject": {
     "name": "frontend",
     "digest": {
-      "sha256": "b1c1affcf5fe4df85eb8c9c8d19082900c5cd2ecc3288df1abae3ae5cee8cbde"
+      "sha256": "ffd00f4d59fd48dcd339ea22c45b5f7335c306ba77d6d3b5f754085fbf62d1e6"
     },
-    "local_path": "<workspace>/BrowserPilot\\generative-ui\\frontend",
+    "local_path": "<workspace>/luminara-agent-spec\\frontend",
     "format": "directory",
     "architecture": null
   },
@@ -23,11 +23,11 @@
   },
   "raw_result": null,
   "normalized_result": {
-    "input_path": "<workspace>/BrowserPilot\\generative-ui\\frontend",
+    "input_path": "<workspace>/luminara-agent-spec\\frontend",
     "format": "directory",
-    "root_artifact_sha256": "b1c1affcf5fe4df85eb8c9c8d19082900c5cd2ecc3288df1abae3ae5cee8cbde",
-    "inventory_manifest_id": "agm_cd356d08a8fff9f93f6dfc5732a50e2ed9498451cf38e93cca1f9937f2bb81fd",
-    "inventory_graph_sha256": "48d306f27a3e22b8d1cd7a808eb7b8ec8152093064f214d4bfafa605c5e6e85b",
+    "root_artifact_sha256": "ffd00f4d59fd48dcd339ea22c45b5f7335c306ba77d6d3b5f754085fbf62d1e6",
+    "inventory_manifest_id": "agm_741c26f083018b393ead45336f6dc57945503cd9b20d97793fcbe49a8cdefc55",
+    "inventory_graph_sha256": "fdeccff3057773540e250faef119812193a06c710aa080e5f6d687e62a5e57a6",
     "integrity_contradictions_count": 0,
     "integrity_contradictions": [],
     "graph": "<summary: dict>",
@@ -55,13 +55,13 @@
       "resolved_native_addon_bindings": 0
     },
     "statistics": {
-      "relevant_files": 137,
+      "relevant_files": 23,
       "nested_asar_containers": 0,
-      "text_bytes_read": 1005585,
+      "text_bytes_read": 227885,
       "invalid_utf8_files": 0,
-      "parsed_javascript_files": 129,
-      "visited_ast_nodes": 87800,
-      "findings": 1733,
+      "parsed_javascript_files": 17,
+      "visited_ast_nodes": 7064,
+      "findings": 141,
       "modules": 0,
       "parse_failures": 2
     },

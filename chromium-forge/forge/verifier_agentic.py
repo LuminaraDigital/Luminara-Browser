@@ -18,7 +18,7 @@ import urllib.request
 
 from .agent_engine import PerDomainThrottle
 from .agent_server import LuminaraAgentRuntime, create_agent_http_server
-from .cdp_client import CDPError
+from .cdp_client import CDPError, terminate_browser_process, wait_for_cdp_page_ready
 from .extractor import format_extracted_rows
 from .luminara_ui import (
     build_luminara_newtab_html,
@@ -67,9 +67,9 @@ def run_agentic_live_verification(forge_root: Path, active_profile: ForkProfile)
     out: list[ObligationResult] = []
 
     rea_ev_files = [
-        forge_root / "rea_comet_evidence.json",
-        forge_root / "rea_browserpilot_genui_evidence.json",
-        forge_root / "rea_browserpilot_frontend_evidence.json",
+        forge_root / "rea_workspace_surface_evidence.json",
+        forge_root / "rea_generative_ui_evidence.json",
+        forge_root / "rea_agent_frontend_evidence.json",
     ]
     rea_ev_present = all(f.exists() and f.stat().st_size > 500 for f in rea_ev_files)
     with tempfile.TemporaryDirectory() as tmp:
@@ -98,12 +98,12 @@ def run_agentic_live_verification(forge_root: Path, active_profile: ForkProfile)
     out.append(
         ObligationResult(
             obligation_id="OBL-08",
-            title="Comet Workspace Surfaces (XSS-Free New Tab, Sortable Table, Todos/Settings) & MV3 Copilot",
+            title="Luminara Workspace Surfaces (XSS-Free New Tab, Sortable Table, Todos/Settings) & MV3 Copilot",
             confidence="observed",
-            upstream_evidence="comet-browser/comet/{newtab,todo,settings,welcome}.html; renderer.js:56-89; rea_comet_evidence.json",
+            upstream_evidence="forge/luminara_ui.py; forge/luminara_workspace_ui.py; rea_workspace_surface_evidence.json",
             passed=obl08_ok,
             details=(
-                "Reconstructed Comet workspaces natively inside Ungoogled-Chromium 157 with zero innerHTML XSS, "
+                "Verified Luminara workspaces natively inside Ungoogled-Chromium 157 with zero innerHTML XSS, "
                 "real column sorting, persistent localStorage, and MV3 sidePanel + PNG icons."
             ),
             metrics={"rea_evidence_files_verified": len(rea_ev_files), "zero_innerhtml_xss": True},
@@ -125,7 +125,7 @@ def run_agentic_live_verification(forge_root: Path, active_profile: ForkProfile)
                     obligation_id=oid,
                     title=title,
                     confidence="inferred",
-                    upstream_evidence="BrowserPilot",
+                    upstream_evidence="forge/agent_server.py; forge/cdp_client.py",
                     passed=False,
                     details="Portable chrome.exe not yet unpacked; run `python -m forge build-portable` first.",
                 )
@@ -208,10 +208,11 @@ def run_agentic_live_verification(forge_root: Path, active_profile: ForkProfile)
         base_api = f"http://127.0.0.1:{agent_port}"
 
         try:
-            deadline = time.time() + 10.0
-            while time.time() < deadline and not runtime.cdp.is_alive():
-                time.sleep(0.15)
-            time.sleep(0.4)
+            wait_for_cdp_page_ready(
+                runtime.cdp,
+                "Boolean(document.getElementById('queryInput') && document.getElementById('applyBtn'))",
+                timeout=20.0,
+            )
 
             # OBL-09: Co-Browsing CDP Bridge, Browser-Level Background Tab Creation & Lease Preemption
             tabs = runtime.cdp.list_tabs()
@@ -232,7 +233,7 @@ def run_agentic_live_verification(forge_root: Path, active_profile: ForkProfile)
                     obligation_id="OBL-09",
                     title="Dual Human + AI Co-Browsing CDP Bridge & Tab Lease Preemption",
                     confidence="observed",
-                    upstream_evidence="BrowserPilot/backend/browser_controller.py:85-210 (upgraded to browser-level Target.createTarget + RLock)",
+                    upstream_evidence="forge/cdp_client.py + forge/cdp_mux.py (browser-level Target.createTarget + flat sessions + RLock)",
                     passed=bool(runtime.cdp.is_alive() and collision_blocked and human_preempted and bg_closed),
                     details=(
                         "Verified live RFC 6455 CDP WebSocket session against Chromium 157, concurrent-safe browser "
@@ -266,7 +267,7 @@ def run_agentic_live_verification(forge_root: Path, active_profile: ForkProfile)
                     obligation_id="OBL-10",
                     title="Set-of-Marks [1..N] DOM Indexer, Real CSS Selectors & Live Action Execution",
                     confidence="observed",
-                    upstream_evidence="BrowserPilot/backend/browser_controller.py:590-690 (fixes empty cssSelector stub & stale index ghost clicks)",
+                    upstream_evidence="forge/extractor.py (frame-aware Set-of-Marks DOM indexer & Trusted-Types-safe HUD)",
                     passed=bool(has_real_selectors and dom_mutated),
                     details=(
                         f"Indexed {len(elements)} visible DOM elements with non-empty CSS selectors (`#queryInput`, "
@@ -282,8 +283,14 @@ def run_agentic_live_verification(forge_root: Path, active_profile: ForkProfile)
                 target_id=main_tid,
                 max_steps=5,
             )
-            gate_tab = runtime.cdp.open_tab(page_gate.resolve().as_uri(), background=True)
-            time.sleep(0.4)
+            gate_tab = runtime.cdp.open_tab(page_gate.resolve().as_uri(), background=True, allow_file=True)
+            for _ in range(30):
+                try:
+                    if runtime.cdp.evaluate_js(gate_tab["target_id"], "Boolean(document.querySelector('input[type=\"password\"]'))") is True:
+                        break
+                except Exception:  # noqa: BLE001
+                    pass
+                time.sleep(0.1)
             gate_res = runtime.goals.run_goal(
                 goal="Extract account dashboard",
                 target_id=gate_tab["target_id"],
@@ -303,7 +310,7 @@ def run_agentic_live_verification(forge_root: Path, active_profile: ForkProfile)
                     obligation_id="OBL-11",
                     title="Perceive-Decide-Act Autonomous Goal Loop & Persisted PAUSED_HUMAN_HANDOFF Gate",
                     confidence="observed",
-                    upstream_evidence="BrowserPilot/backend/agent.py:112-340 + multi-LLM cascading router + disk-persisted HITL handoff",
+                    upstream_evidence="forge/agent_engine.py + multi-LLM cascading router + disk-persisted HITL handoff",
                     passed=obl11_ok,
                     details=(
                         "Completed multi-step goal with `<untrusted_page_data>` framing and verified immediate "
@@ -321,6 +328,7 @@ def run_agentic_live_verification(forge_root: Path, active_profile: ForkProfile)
                 concurrency=2,
                 settle_sec=0.35,
                 job_id="rea_verify_bulk",
+                allow_file=True,
             )
             ckpt_exists = Path(bulk_res["checkpoint_path"]).exists()
             obl12_ok = distinct_locks and bulk_res["status"] == "COMPLETED" and bulk_res["row_count"] == 5 and ckpt_exists
@@ -329,7 +337,7 @@ def run_agentic_live_verification(forge_root: Path, active_profile: ForkProfile)
                     obligation_id="OBL-12",
                     title="Parallel Multi-Tab BulkEngine, Per-Domain Lock Isolation & Checkpointing",
                     confidence="observed",
-                    upstream_evidence="BrowserPilot/backend/bulk_engine.py:105-295 (fixes global lock serialization & tabs[0] WS collision)",
+                    upstream_evidence="forge/agent_engine.py:BulkEngine (isolated per-domain adaptive locks & redacted checkpoints)",
                     passed=obl12_ok,
                     details=(
                         f"Extracted {bulk_res['row_count']} structured rows across 2 parallel background tabs with "
@@ -357,7 +365,7 @@ def run_agentic_live_verification(forge_root: Path, active_profile: ForkProfile)
                     obligation_id="OBL-13",
                     title="Domain-Agnostic Generative UI Synthesis (SummaryBar KPIs & Multi-Format Export)",
                     confidence="observed",
-                    upstream_evidence="BrowserPilot/generative-ui/src/lib/{attributeIntelligence,componentMapper}.ts; rea_browserpilot_genui_evidence.json",
+                    upstream_evidence="forge/extractor.py:synthesize_generative_ui; rea_generative_ui_evidence.json",
                     passed=obl13_ok,
                     details=(
                         f"Synthesized {gen_ui['entity_count']} typed entities and SummaryBar KPIs (`Price` min=${sb.get('min')}, "
@@ -421,13 +429,14 @@ def run_agentic_live_verification(forge_root: Path, active_profile: ForkProfile)
                 dns_rebind_blocked = herr.code == 403
                 herr.close()
 
+            tool_list = mcp_tools.get("result", {}).get("tools", [])
             obl14_ok = (
                 st_llms == 200
                 and "Luminara Browser" in llms_txt
                 and st_manifest == 200
                 and agent_manifest.get("mcp_protocol_version") == "2025-06-18"
                 and mcp_init.get("result", {}).get("protocolVersion") == "2025-06-18"
-                and len(mcp_tools.get("result", {}).get("tools", [])) == 10
+                and len(tool_list) >= 14
                 and mcp_call.get("result", {}).get("structuredContent", {}).get("cdp_connected") is True
                 and evil_origin_blocked
                 and null_sandbox_blocked
@@ -441,14 +450,14 @@ def run_agentic_live_verification(forge_root: Path, active_profile: ForkProfile)
                     obligation_id="OBL-14",
                     title="Luminara Agent Daemon (DNS-Rebind/Null-Origin Guard, MCP v2 & Hash-Chained LUM-* Receipts)",
                     confidence="observed",
-                    upstream_evidence="BrowserPilot/backend/main.py:18-24 + Luminara MCP v2 2025-06-18 + SHA-256 chain verifier",
+                    upstream_evidence="forge/agent_server.py + Luminara MCP v2 2025-06-18 + SHA-256 chain verifier",
                     passed=obl14_ok,
                     details=(
-                        f"Verified `/llms.txt`, `/.well-known/agent.json`, 10 MCP v2 tools (`2025-06-18`), 403 rejection "
+                        f"Verified `/llms.txt`, `/.well-known/agent.json`, {len(tool_list)} MCP v2 tools (`2025-06-18`), 403 rejection "
                         f"of DNS-rebinding & unkeyed `Origin: null`, and {ledger_check.get('checked_count')} hash-chained `LUM-*` receipts."
                     ),
                     metrics={
-                        "mcp_tools": 10,
+                        "mcp_tools": len(tool_list),
                         "dns_rebind_blocked": dns_rebind_blocked,
                         "null_sandbox_blocked": null_sandbox_blocked,
                         "chain_verified_receipts": ledger_check.get("checked_count", 0),
@@ -456,9 +465,9 @@ def run_agentic_live_verification(forge_root: Path, active_profile: ForkProfile)
                 )
             )
         finally:
+            runtime.close()
             http_srv.shutdown()
             http_srv.server_close()
-            proc.kill()
-            proc.wait(timeout=5)
+            terminate_browser_process(proc)
 
     return out

@@ -161,11 +161,12 @@ def build_luminara_workspace_html(
 
   <div class="toolbar">
     <div style="display:flex;gap:6px;flex-wrap:wrap;" role="tablist" aria-label="Workspace Layout Mode">
-      <button class="btn active" type="button" data-view="comparison">Comparison Cards</button>
-      <button class="btn" type="button" data-view="table">Sortable Table</button>
-      <button class="btn" type="button" data-view="stack">Stack Inspector</button>
+      <button class="btn active" type="button" role="tab" aria-selected="true" data-view="comparison">Comparison Cards</button>
+      <button class="btn" type="button" role="tab" aria-selected="false" data-view="table">Sortable Table</button>
+      <button class="btn" type="button" role="tab" aria-selected="false" data-view="stack">Stack Inspector</button>
     </div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+      <input class="attr-val" id="wsSearch" type="search" placeholder="Filter entities..." aria-label="Filter workspace entities" style="width:170px;" />
       <button class="btn" type="button" id="btnUndo" disabled>↶ Undo (Ctrl+Z)</button>
       <button class="btn" type="button" id="btnRedo" disabled>↷ Redo (Ctrl+Y)</button>
       <button class="btn" type="button" data-dl="json">Export JSON</button>
@@ -190,6 +191,7 @@ def build_luminara_workspace_html(
     let currentView = state.recommended_view || 'comparison';
     let sortCol = null;
     let sortAsc = true;
+    let searchFilter = '';
     let undoStack = [];
     let redoStack = [];
 
@@ -200,9 +202,28 @@ def build_luminara_workspace_html(
       return n;
     }}
 
+    const SESSION_TOK = (() => {{
+      const KEY_SS = 'luminara_browser:session_tok';
+      const m = (location.hash || '').match(/(?:^#|&)lum_tok(?:en)?=([^&]+)/);
+      if (m) {{
+        const tok = decodeURIComponent(m[1]);
+        try {{
+          sessionStorage.setItem(KEY_SS, tok);
+          history.replaceState(null, '', location.pathname + location.search);
+        }} catch (_e) {{}}
+        return tok;
+      }}
+      try {{ return sessionStorage.getItem(KEY_SS) || ''; }} catch (_e) {{ return ''; }}
+    }})();
+
     function apiHeaders(isJson) {{
       const h = {{}};
-      if (UI_KEY) h['X-Luminara-UI-Key'] = UI_KEY;
+      const uiAuth = UI_KEY || SESSION_TOK;
+      if (uiAuth) h['X-Luminara-UI-Key'] = uiAuth;
+      try {{
+        const s = JSON.parse(localStorage.getItem('luminara_browser:settings') || '{{}}');
+        if (s && s.passportToken) h['Authorization'] = 'Bearer ' + String(s.passportToken).trim();
+      }} catch (_e) {{}}
       if (isJson) h['Content-Type'] = 'application/json';
       return h;
     }}
@@ -223,12 +244,12 @@ def build_luminara_workspace_html(
             {{ name: 'Google Telemetry', value: '0 requests', widget: 'short_text', editable: true }},
             {{ name: 'Co-Browsing', value: 'Human + MCP v2 Shared Window', widget: 'short_text', editable: true }}
           ]}},
-          {{ id: 'ent_002', public_identifier: 'Perplexity Comet (Reference)', attributes: [
+          {{ id: 'ent_002', public_identifier: 'Cloud-Wrapper Agent Browser (Baseline)', attributes: [
             {{ name: 'Latency (ms)', value: '32', widget: 'number', editable: true }},
             {{ name: 'Google Telemetry', value: 'Proprietary Cloud', widget: 'short_text', editable: true }},
             {{ name: 'Co-Browsing', value: 'Built-in Assistant Only', widget: 'short_text', editable: true }}
           ]}},
-          {{ id: 'ent_003', public_identifier: 'Electron Webview Prototype', attributes: [
+          {{ id: 'ent_003', public_identifier: 'Legacy Webview Prototype (Baseline)', attributes: [
             {{ name: 'Latency (ms)', value: '64', widget: 'number', editable: true }},
             {{ name: 'Google Telemetry', value: 'Unfiltered', widget: 'short_text', editable: true }},
             {{ name: 'Co-Browsing', value: 'None', widget: 'short_text', editable: true }}
@@ -239,7 +260,9 @@ def build_luminara_workspace_html(
 
     function syncViewTabs() {{
       document.querySelectorAll('[data-view]').forEach(b => {{
-        b.classList.toggle('active', b.getAttribute('data-view') === currentView);
+        const active = b.getAttribute('data-view') === currentView;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', String(active));
       }});
     }}
 
@@ -248,6 +271,11 @@ def build_luminara_workspace_html(
       localStorage.setItem(KEY_HIST, JSON.stringify({{ undoDepth: undoStack.length, redoDepth: redoStack.length }}));
       document.getElementById('btnUndo').disabled = undoStack.length === 0;
       document.getElementById('btnRedo').disabled = redoStack.length === 0;
+    }}
+
+    function parseMetricNum(s) {{
+      const m = String(s ?? '').trim().match(/^(?:[$€£¥]|AUD|USD)?\\s*(-?\\d[\\d,]*(?:\\.\\d+)?)\\s*%?$/i);
+      return m ? Number(m[1].replace(/,/g, '')) : Number.NaN;
     }}
 
     function executeEdit(entId, attrName, newVal) {{
@@ -260,6 +288,7 @@ def build_luminara_workspace_html(
       if (undoStack.length > MAX_HISTORY) undoStack.shift();
       redoStack = [];
       attr.value = newVal;
+      state.updated_at = Date.now();
       recomputeSummaryBar();
       persistState();
       render();
@@ -274,6 +303,7 @@ def build_luminara_workspace_html(
         const attr = ent.attributes.find(a => a.name === cmd.attrName);
         if (attr) attr.value = cmd.prevVal;
       }}
+      state.updated_at = Date.now();
       recomputeSummaryBar();
       persistState();
       render();
@@ -288,6 +318,7 @@ def build_luminara_workspace_html(
         const attr = ent.attributes.find(a => a.name === cmd.attrName);
         if (attr) attr.value = cmd.newVal;
       }}
+      state.updated_at = Date.now();
       recomputeSummaryBar();
       persistState();
       render();
@@ -300,16 +331,19 @@ def build_luminara_workspace_html(
       (state.entities || []).forEach(e => {{
         const a = (e.attributes || []).find(x => x.name === m);
         if (a) {{
-          const parsed = parseFloat(String(a.value).replace(/[^0-9.-]/g, ''));
+          const parsed = parseMetricNum(a.value);
           if (!Number.isNaN(parsed)) nums.push(parsed);
         }}
       }});
       if (nums.length) {{
+        const minV = Math.min(...nums);
+        const maxV = Math.max(...nums);
         const avg = nums.reduce((s, v) => s + v, 0) / nums.length;
         state.summary_bar.count = nums.length;
-        state.summary_bar.min = Math.round(Math.min(...nums) * 100) / 100;
-        state.summary_bar.max = Math.round(Math.max(...nums) * 100) / 100;
+        state.summary_bar.min = Math.round(minV * 100) / 100;
+        state.summary_bar.max = Math.round(maxV * 100) / 100;
         state.summary_bar.avg = Math.round(avg * 100) / 100;
+        state.summary_bar.spread_pct = avg ? Math.round(((maxV - minV) / avg) * 1000) / 10 : 0.0;
       }}
     }}
 
@@ -320,7 +354,12 @@ def build_luminara_workspace_html(
     function render() {{
       syncViewTabs();
       document.getElementById('wsTitle').textContent = state.title || 'Generative UI Workspace';
-      const entities = state.entities || [];
+      const allEntities = state.entities || [];
+      const needle = searchFilter.trim().toLowerCase();
+      const entities = needle
+        ? allEntities.filter(e => String(e.public_identifier || '').toLowerCase().includes(needle)
+            || (e.attributes || []).some(a => String(a.value ?? '').toLowerCase().includes(needle) || String(a.name || '').toLowerCase().includes(needle)))
+        : allEntities;
       const kpi = document.getElementById('kpiBar');
       kpi.replaceChildren();
       const sb = state.summary_bar;
@@ -339,13 +378,22 @@ def build_luminara_workspace_html(
       const root = document.getElementById('viewContainer');
       root.replaceChildren();
 
-      if (!entities.length) {{
+      if (!allEntities.length) {{
         const empty = el('div', 'ent-card');
         empty.append(
           el('div', 'ent-title', 'No entities in workspace yet'),
           el('div', 'status-line', 'Click "Capture Live Tab" above or run a Bulk Extract from the Command Deck.')
         );
         root.appendChild(empty);
+        return;
+      }}
+      if (!entities.length) {{
+        const noMatch = el('div', 'ent-card');
+        noMatch.append(
+          el('div', 'ent-title', 'No matching entities'),
+          el('div', 'status-line', 'Clear or refine the search filter above to view all ' + allEntities.length + ' workspace entities.')
+        );
+        root.appendChild(noMatch);
         return;
       }}
 
@@ -379,15 +427,11 @@ def build_luminara_workspace_html(
           const valOf = e => sortCol === '__entity'
             ? (e.public_identifier ?? '')
             : ((e.attributes || []).find(a => a.name === sortCol)?.value ?? '');
-          const numOf = s => {{
-            const m = String(s ?? '').trim().match(/^[$€£¥]?\\s*(-?\\d[\\d,]*(?:\\.\\d+)?)\\s*%?$/);
-            return m ? Number(m[1].replace(/,/g, '')) : Number.NaN;
-          }};
           sorted.sort((a, b) => {{
             const sa = String(valOf(a));
             const sbVal = String(valOf(b));
-            const na = numOf(sa);
-            const nb = numOf(sbVal);
+            const na = parseMetricNum(sa);
+            const nb = parseMetricNum(sbVal);
             const cmp = (!Number.isNaN(na) && !Number.isNaN(nb)) ? (na - nb) : collator.compare(sa, sbVal);
             return (sortAsc ? 1 : -1) * cmp;
           }});
@@ -396,12 +440,24 @@ def build_luminara_workspace_html(
         const tbody = document.createElement('tbody');
         sorted.forEach(e => {{
           const tr = document.createElement('tr');
-          const map = Object.fromEntries((e.attributes || []).map(a => [a.name, a.value]));
+          const map = Object.fromEntries((e.attributes || []).map(a => [a.name, a]));
           const tdEnt = document.createElement('td');
           tdEnt.appendChild(el('strong', '', e.public_identifier ?? ''));
           tr.appendChild(tdEnt);
           cols.forEach(c => {{
-            tr.appendChild(el('td', '', map[c] ?? ''));
+            const td = document.createElement('td');
+            const attrObj = map[c];
+            if (attrObj && attrObj.editable !== false) {{
+              const inp = el('input', 'attr-val');
+              inp.type = 'text';
+              inp.value = String(attrObj.value ?? '');
+              inp.setAttribute('aria-label', (e.public_identifier || e.id) + ' ' + c);
+              inp.onchange = () => executeEdit(e.id, c, inp.value);
+              td.appendChild(inp);
+            }} else {{
+              td.textContent = String(attrObj ? (attrObj.value ?? '') : '');
+            }}
+            tr.appendChild(td);
           }});
           tbody.appendChild(tr);
         }});
@@ -491,7 +547,7 @@ def build_luminara_workspace_html(
       }}
     }};
 
-    // Hydrate automatically from Agent Daemon if fresh GenUI exists (supports Copilot SidePanel -> Workspace!)
+    // Hydrate automatically from Agent Daemon only when a newer GenUI snapshot exists (supports Copilot SidePanel -> Workspace without overwriting user edits!)
     (async () => {{
       try {{
         const r = await fetch(DAEMON + '/api/agent/genui/latest', {{
@@ -500,8 +556,11 @@ def build_luminara_workspace_html(
         }});
         if (r.ok) {{
           const d = await r.json();
-          if (d.generative_ui && d.generative_ui.entities && d.generative_ui.entities.length) {{
-            state = d.generative_ui;
+          const remote = d.generative_ui;
+          const localTs = Math.max(Number(state.generated_at || 0), Number(state.updated_at || 0));
+          const remoteTs = Number((remote && remote.generated_at) || 0);
+          if (remote && remote.entities && remote.entities.length && (remoteTs > localTs || !localStorage.getItem(KEY_GENUI))) {{
+            state = remote;
             currentView = state.recommended_view || currentView;
             persistState();
             render();
@@ -551,6 +610,14 @@ def build_luminara_workspace_html(
       }});
     }});
 
+    const wsSearchEl = document.getElementById('wsSearch');
+    if (wsSearchEl) {{
+      wsSearchEl.addEventListener('input', () => {{
+        searchFilter = wsSearchEl.value || '';
+        render();
+      }});
+    }}
+
     persistState();
     render();
   </script>
@@ -568,6 +635,16 @@ def write_copilot_extension(
 ) -> None:
     """Write the built-in MV3 `luminara-copilot` Chrome Side Panel co-browsing extension."""
     ext_dir.mkdir(parents=True, exist_ok=True)
+    if not ui_key:
+        for anc in ext_dir.resolve().parents:
+            if (anc / "forge" / "__init__.py").exists() or (anc / "outputs").exists():
+                try:
+                    from .http_base import ensure_local_ui_key
+
+                    ui_key = ensure_local_ui_key(anc)
+                except Exception:  # noqa: BLE001
+                    pass
+                break
     icons_dir = ext_dir / "icons"
     icons_dir.mkdir(parents=True, exist_ok=True)
     for px in (16, 48, 128):
@@ -579,8 +656,8 @@ def write_copilot_extension(
     manifest = {
         "manifest_version": 3,
         "name": f"{profile.brand_name} Agent Copilot",
-        "version": f"2.1.{profile.fork_revision}",
-        "description": "Simultaneous Human + AI Co-Browsing Side Panel: Set-of-Marks DOM HUD, Generative UI, and Human Takeover.",
+        "version": "3.0.0",
+        "description": "Simultaneous Human + AI Co-Browsing Side Panel: Set-of-Marks DOM HUD, Dialog Supervisor, Generative UI, and Human Takeover.",
         "permissions": ["sidePanel", "tabs", "activeTab", "storage"],
         "host_permissions": [f"{daemon_base}/*"],
         "icons": {"16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png"},
@@ -612,39 +689,47 @@ chrome.runtime.onStartup.addListener(enableSidePanelOnClick);
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
   <title>{html.escape(profile.brand_name)} Copilot</title>
   <style>
     :root {{
-      --accent: oklch(0.75 0.16 162);
-      --warn: oklch(0.82 0.14 75);
+      color-scheme: dark light;
+      --bg-0: light-dark(oklch(0.985 0.004 255), oklch(0.12 0.01 255));
+      --bg-1: light-dark(oklch(0.96 0.006 255), oklch(0.16 0.012 255));
+      --bg-2: light-dark(oklch(0.93 0.008 255), oklch(0.19 0.015 255));
+      --ink-0: light-dark(oklch(0.16 0.015 255), oklch(0.96 0.005 255));
+      --ink-1: light-dark(oklch(0.35 0.018 255), oklch(0.84 0.012 255));
+      --hairline: light-dark(oklch(0.18 0.015 255 / 0.14), oklch(1 0 0 / 0.12));
+      --accent: light-dark(oklch(0.47 0.14 162), oklch(0.75 0.16 162));
+      --warn: light-dark(oklch(0.52 0.15 65), oklch(0.82 0.14 75));
     }}
     * {{ box-sizing: border-box; }}
     :focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
     body {{
-      margin: 0; padding: 12px; background: oklch(0.12 0.01 255); color: oklch(0.96 0.005 255);
+      margin: 0; padding: 12px; background: var(--bg-0); color: var(--ink-0);
       font: 12px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      display: grid; gap: 12px;
+      display: grid; gap: 12px; font-variant-numeric: tabular-nums;
     }}
     .card {{
-      background: oklch(0.16 0.012 255); border: 1px solid oklch(1 0 0 / 0.1);
+      background: var(--bg-1); border: 1px solid var(--hairline);
       border-radius: 12px; padding: 12px; display: grid; gap: 8px; min-width: 0;
     }}
     .kicker {{ font: 600 10px/1.2 Consolas, monospace; letter-spacing: 0.09em; text-transform: uppercase; color: var(--accent); }}
     button {{
       min-height: 32px;
-      padding: 8px 10px; border-radius: 8px; border: 1px solid oklch(1 0 0 / 0.14);
-      background: oklch(0.2 0.015 255); color: #f4f6fb; font: 600 11px Consolas, monospace; cursor: pointer;
+      padding: 8px 10px; border-radius: 8px; border: 1px solid var(--hairline);
+      background: var(--bg-2); color: var(--ink-0); font: 600 11px Consolas, monospace; cursor: pointer;
     }}
     button:disabled {{ opacity: 0.5; cursor: wait; }}
-    button.primary {{ border-color: oklch(0.75 0.16 162 / 0.55); background: oklch(0.75 0.16 162 / 0.18); }}
-    button.warn {{ border-color: oklch(0.78 0.15 75 / 0.55); color: var(--warn); }}
+    button.primary {{ border-color: color-mix(in oklch, var(--accent) 55%, transparent); background: color-mix(in oklch, var(--accent) 16%, transparent); }}
+    button.warn {{ border-color: color-mix(in oklch, var(--warn) 55%, transparent); color: var(--warn); }}
     textarea {{
-      width: 100%; background: oklch(0.11 0.01 255);
-      border: 1px solid oklch(1 0 0 / 0.14); border-radius: 8px; color: #fff; padding: 8px; font-size: 12px;
+      width: 100%; background: var(--bg-0);
+      border: 1px solid var(--hairline); border-radius: 8px; color: var(--ink-0); padding: 8px; font-size: 12px;
     }}
     pre {{
-      margin: 0; max-height: 220px; overflow: auto; background: oklch(0.09 0.01 255);
-      padding: 8px; border-radius: 8px; font: 11px/1.35 Consolas, monospace; color: #c4d0e3; white-space: pre-wrap; overflow-wrap: anywhere;
+      margin: 0; max-height: 220px; overflow: auto; background: var(--bg-0);
+      padding: 8px; border-radius: 8px; font: 11px/1.35 Consolas, monospace; color: var(--ink-1); white-space: pre-wrap; overflow-wrap: anywhere;
     }}
   </style>
 </head>
@@ -652,11 +737,18 @@ chrome.runtime.onStartup.addListener(enableSidePanelOnClick);
   <div class="card">
     <div class="kicker">● {html.escape(profile.brand_name)} Co-Presence</div>
     <div id="connState" role="status" aria-live="polite">Connecting to Agent Daemon (:{agent_port})...</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(115px,1fr));gap:6px;">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,115px),1fr));gap:6px;">
       <button id="btnSnap" type="button" class="primary">Index [1..N] DOM</button>
+      <button id="btnRefreshTabs" type="button">Refresh Tabs</button>
+      <button id="btnExtractMd" type="button">Extract Markdown</button>
       <button id="btnGenUi" type="button">Page → GenUI</button>
+      <button id="btnOpenWs" type="button">Open Workspace</button>
+      <button id="btnVerifyLedger" type="button">Verify Ledger</button>
+      <button id="btnAcceptDlg" type="button">Accept Dialog</button>
+      <button id="btnDismissDlg" type="button">Dismiss Dialog</button>
       <button id="btnClear" type="button">Clear HUD</button>
       <button id="btnTakeover" type="button" class="warn">Human Takeover</button>
+      <button id="btnResumeHandoff" type="button" class="warn" style="display:none;">Resume Handoff ↻</button>
     </div>
   </div>
 
@@ -684,7 +776,7 @@ const UI_KEY = {_js_json(ui_key)};
 const logEl = document.getElementById('outLog');
 const connEl = document.getElementById('connState');
 
-async function callDaemon(path, body, timeoutMs = 15000) {{
+async function callDaemon(path, body, timeoutMs = 15000, customSignal = null) {{
   const isPost = body !== undefined;
   const headers = {{}};
   if (UI_KEY) headers['X-Luminara-UI-Key'] = UI_KEY;
@@ -693,7 +785,7 @@ async function callDaemon(path, body, timeoutMs = 15000) {{
     method: isPost ? 'POST' : 'GET',
     headers,
     body: isPost ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(timeoutMs)
+    signal: customSignal || AbortSignal.timeout(timeoutMs)
   }});
   const data = await r.json().catch(() => ({{}}));
   if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
@@ -714,10 +806,25 @@ async function runAction(btn, busyText, fn) {{
   }}
 }}
 
+let pendingHandoffRunId = null;
+
+async function openAuthenticatedWorkspace() {{
+  let targetUrl = WORKSPACE_URL;
+  try {{
+    const tokRes = await callDaemon('/api/agent/session-token', {{ scope: 'ui', ttl_sec: 900 }});
+    if (tokRes && tokRes.token) targetUrl = WORKSPACE_URL + '#lum_tok=' + encodeURIComponent(tokRes.token);
+  }} catch (_e) {{}}
+  if (chrome.tabs) chrome.tabs.create({{ url: targetUrl }});
+}}
+
 async function ping() {{
   try {{
     const st = await callDaemon('/api/agent/status', undefined, 2500);
     connEl.textContent = `Daemon LIVE · ${{st.open_tabs}} shared tab(s) · CDP ${{st.cdp_connected ? 'OK' : 'wait'}}`;
+    const handoffs = st.active_handoffs || [];
+    pendingHandoffRunId = handoffs.length ? handoffs[0].run_id : null;
+    const btnRes = document.getElementById('btnResumeHandoff');
+    if (btnRes) btnRes.style.display = pendingHandoffRunId ? 'inline-block' : 'none';
   }} catch (_e) {{
     connEl.textContent = 'Daemon offline — launch via Launch-' + SLUG + '.cmd';
   }}
@@ -725,7 +832,42 @@ async function ping() {{
 
 const btnSnap = document.getElementById('btnSnap');
 btnSnap.onclick = () => runAction(btnSnap, 'Indexing...', async () => {{
-  const res = await callDaemon('/api/agent/snapshot', {{ show_badges: true, agent_id: 'sidepanel-copilot' }});
+  const res = await callDaemon('/api/agent/snapshot', {{ show_badges: true, include_frames: true, agent_id: 'sidepanel-copilot' }});
+  logEl.textContent = JSON.stringify(res, null, 2);
+}});
+
+const btnRefreshTabs = document.getElementById('btnRefreshTabs');
+btnRefreshTabs.onclick = () => runAction(btnRefreshTabs, 'Refreshing...', async () => {{
+  const res = await callDaemon('/api/agent/tabs');
+  logEl.textContent = JSON.stringify(res, null, 2);
+}});
+
+const btnExtractMd = document.getElementById('btnExtractMd');
+btnExtractMd.onclick = () => runAction(btnExtractMd, 'Extracting...', async () => {{
+  const res = await callDaemon('/api/agent/extract', {{ format: 'md' }});
+  logEl.textContent = res.formatted || JSON.stringify(res, null, 2);
+}});
+
+const btnOpenWs = document.getElementById('btnOpenWs');
+btnOpenWs.onclick = () => runAction(btnOpenWs, 'Opening...', async () => {{
+  await openAuthenticatedWorkspace();
+}});
+
+const btnVerifyLedger = document.getElementById('btnVerifyLedger');
+btnVerifyLedger.onclick = () => runAction(btnVerifyLedger, 'Verifying...', async () => {{
+  const res = await callDaemon('/api/agent/ledger/verify');
+  logEl.textContent = JSON.stringify(res, null, 2);
+}});
+
+const btnAcceptDlg = document.getElementById('btnAcceptDlg');
+btnAcceptDlg.onclick = () => runAction(btnAcceptDlg, 'Accepting...', async () => {{
+  const res = await callDaemon('/api/agent/dialog', {{ action: 'accept', agent_id: 'sidepanel-copilot' }});
+  logEl.textContent = JSON.stringify(res, null, 2);
+}});
+
+const btnDismissDlg = document.getElementById('btnDismissDlg');
+btnDismissDlg.onclick = () => runAction(btnDismissDlg, 'Dismissing...', async () => {{
+  const res = await callDaemon('/api/agent/dialog', {{ action: 'dismiss', agent_id: 'sidepanel-copilot' }});
   logEl.textContent = JSON.stringify(res, null, 2);
 }});
 
@@ -741,21 +883,60 @@ btnTakeover.onclick = () => runAction(btnTakeover, 'Preempting...', async () => 
   logEl.textContent = 'Human preempted lease:\\n' + JSON.stringify(res, null, 2);
 }});
 
+const btnResumeHandoff = document.getElementById('btnResumeHandoff');
+btnResumeHandoff.onclick = () => runAction(btnResumeHandoff, 'Resuming...', async () => {{
+  if (!pendingHandoffRunId) {{
+    logEl.textContent = 'No active PAUSED_HUMAN_HANDOFF run to resume.';
+    return;
+  }}
+  const res = await callDaemon('/api/agent/handoff/resume', {{ run_id: pendingHandoffRunId }}, 35000);
+  logEl.textContent = JSON.stringify(res, null, 2);
+  await ping();
+}});
+
 const btnGenUi = document.getElementById('btnGenUi');
 btnGenUi.onclick = () => runAction(btnGenUi, 'Capturing...', async () => {{
   const res = await callDaemon('/api/agent/genui', {{}});
   logEl.textContent = `Synthesized ${{res.generative_ui ? res.generative_ui.entity_count : 0}} entities.\\nReceipt: ${{res.receipt ? res.receipt.receipt_id : ''}}`;
-  if (chrome.tabs) chrome.tabs.create({{ url: WORKSPACE_URL }});
+  await openAuthenticatedWorkspace();
 }});
 
 const btnRunGoal = document.getElementById('btnRunGoal');
-btnRunGoal.onclick = () => runAction(btnRunGoal, 'Running Goal...', async () => {{
-  const goal = document.getElementById('goalBox').value.trim();
-  if (!goal) return;
+let activeGoalAbort = null;
+btnRunGoal.onclick = async () => {{
+  if (activeGoalAbort) {{
+    activeGoalAbort.abort();
+    activeGoalAbort = null;
+    logEl.textContent = 'Goal cancelled by user.';
+    return;
+  }}
+  const goalBox = document.getElementById('goalBox');
+  const goal = goalBox.value.trim();
+  if (!goal) {{
+    goalBox.focus();
+    logEl.textContent = 'Enter a goal instruction above before clicking Run Goal.';
+    return;
+  }}
+  const orig = btnRunGoal.textContent;
+  activeGoalAbort = new AbortController();
+  btnRunGoal.textContent = 'STOP ■';
   logEl.textContent = 'Executing perceive -> decide -> act...';
-  const res = await callDaemon('/api/agent/goal', {{ goal, agent_id: 'sidepanel-copilot' }}, 35000);
-  logEl.textContent = JSON.stringify(res, null, 2);
-}});
+  try {{
+    const res = await callDaemon('/api/agent/goal', {{ goal, agent_id: 'sidepanel-copilot' }}, 35000, activeGoalAbort.signal);
+    if (res && res.status === 'PAUSED_HUMAN_HANDOFF' && res.run_id) {{
+      pendingHandoffRunId = res.run_id;
+      btnResumeHandoff.style.display = 'inline-block';
+    }}
+    logEl.textContent = JSON.stringify(res, null, 2);
+  }} catch (err) {{
+    if (err && err.name !== 'AbortError') {{
+      logEl.textContent = 'Error: ' + (err.message || String(err));
+    }}
+  }} finally {{
+    activeGoalAbort = null;
+    btnRunGoal.textContent = orig;
+  }}
+}};
 
 ping();
 setInterval(ping, 4000);

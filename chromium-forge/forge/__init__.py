@@ -1,3 +1,3 @@
-"""Chromium Forge: Clean-room ungoogled-chromium reconstruction & customizer engine."""
+"""Luminara Browser Forge (`forge/__init__.py`)."""
 
-__version__ = "1.0.0"
+__version__ = "3.0.0"

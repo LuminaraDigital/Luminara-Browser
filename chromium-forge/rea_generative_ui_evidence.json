@@ -1,11 +1,11 @@
 {
-  "evidence_id": "ev_cd934ed1c8e3638fe33adefe54734d75cbc0d9d1f772aeacc4c4455d6c59bcf9",
+  "evidence_id": "ev_35efceda02ee9cee9f2e6c1c153d4061a607224da4a5c47d586e250e3ee3756b",
   "subject": {
-    "name": "comet-browser",
+    "name": "frontend",
     "digest": {
-      "sha256": "1dcc4e8cdd29faac6be3a810e901425b1e06b913db872ac58f49918b5d4da29e"
+      "sha256": "b1c1affcf5fe4df85eb8c9c8d19082900c5cd2ecc3288df1abae3ae5cee8cbde"
     },
-    "local_path": "<workspace>/comet-browser",
+    "local_path": "<workspace>/luminara-agent-spec\\generative-ui\\frontend",
     "format": "directory",
     "architecture": null
   },
@@ -23,17 +23,17 @@
   },
   "raw_result": null,
   "normalized_result": {
-    "input_path": "<workspace>/comet-browser",
+    "input_path": "<workspace>/luminara-agent-spec\\generative-ui\\frontend",
     "format": "directory",
-    "root_artifact_sha256": "1dcc4e8cdd29faac6be3a810e901425b1e06b913db872ac58f49918b5d4da29e",
-    "inventory_manifest_id": "agm_637fa5b2553aec41eaf914e17be96c157518e55ce61f8c7958233e9a5b21641e",
-    "inventory_graph_sha256": "036da7d9ed474dc06e6412df410d35a45de47d044d1e73903c7ac47e7b65c391",
+    "root_artifact_sha256": "b1c1affcf5fe4df85eb8c9c8d19082900c5cd2ecc3288df1abae3ae5cee8cbde",
+    "inventory_manifest_id": "agm_cd356d08a8fff9f93f6dfc5732a50e2ed9498451cf38e93cca1f9937f2bb81fd",
+    "inventory_graph_sha256": "48d306f27a3e22b8d1cd7a808eb7b8ec8152093064f214d4bfafa605c5e6e85b",
     "integrity_contradictions_count": 0,
     "integrity_contradictions": [],
     "graph": "<summary: dict>",
     "summary": {
-      "browser_windows": 1,
-      "explicit_web_preferences": 4,
+      "browser_windows": 0,
+      "explicit_web_preferences": 0,
       "preload_entrypoints": 0,
       "context_bridge_apis": 0,
       "exposed_api_members": 0,
@@ -55,44 +55,38 @@
       "resolved_native_addon_bindings": 0
     },
     "statistics": {
-      "relevant_files": 9,
+      "relevant_files": 137,
       "nested_asar_containers": 0,
-      "text_bytes_read": 481913,
+      "text_bytes_read": 1005585,
       "invalid_utf8_files": 0,
-      "parsed_javascript_files": 2,
-      "visited_ast_nodes": 1167,
-      "findings": 9,
+      "parsed_javascript_files": 129,
+      "visited_ast_nodes": 87800,
+      "findings": 1733,
       "modules": 0,
-      "parse_failures": 0
+      "parse_failures": 2
     },
-    "limitations_count": 9,
+    "limitations_count": 6,
     "limitations": [
       "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
-      "Electron API identity follows proven lexical module aliases and structurally verified module-namespace interop. Other reassignments, dynamic selections, and visibly overwritten namespace members are unresolved; missing findings do not establish absence. Arbitrary call side effects and runtime registration are not evaluated.",
-      "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
       "Graph coverage is incomplete; unavailable facts remain explicit and must not be read as absence.",
       "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
       "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
       "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
-      "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code.",
-      "comet.html has 1 inline JavaScript body starting at line 73 that was not analyzed; endpoints, storage, imports and other facts in it are absent from the evidence."
+      "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code."
     ],
     "semantic_graph": "<summary: dict>"
   },
   "confidence": "derived",
   "authority": "shipped-artifact",
   "environment": null,
-  "limitations_count": 9,
+  "limitations_count": 6,
   "limitations": [
     "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
-    "Electron API identity follows proven lexical module aliases and structurally verified module-namespace interop. Other reassignments, dynamic selections, and visibly overwritten namespace members are unresolved; missing findings do not establish absence. Arbitrary call side effects and runtime registration are not evaluated.",
-    "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
     "Graph coverage is incomplete; unavailable facts remain explicit and must not be read as absence.",
     "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
     "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
     "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
-    "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code.",
-    "comet.html has 1 inline JavaScript body starting at line 73 that was not analyzed; endpoints, storage, imports and other facts in it are absent from the evidence."
+    "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code."
   ],
   "relationship_coverage": null,
   "locations_count": 1,

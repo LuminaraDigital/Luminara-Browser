@@ -25,12 +25,15 @@ jobs:
         run: |
           import subprocess, sys
           from pathlib import Path
-          blocked_exts = {".zip", ".7z", ".exe", ".msi", ".dll", ".pdb", ".crx", ".pak"}
+          blocked_exts = {".zip", ".7z", ".exe", ".msi", ".dll", ".pdb", ".crx", ".pak", ".tar", ".gz", ".tgz", ".xz", ".bz2", ".pem", ".key"}
+          blocked_names = {".env", "vault.json", "vault.key.json", "local_ui_key.txt", "action_ledger.jsonl", "knowledge_graph.sqlite3", "luminara_memory.sqlite3", "active_handoffs.json"}
+          blocked_suffixes = (".sqlite3-wal", ".sqlite3-shm", ".key.json")
           files = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
           bad = []
           for rel in files:
               p = Path(rel)
-              if p.name == ".env" or p.suffix.lower() in blocked_exts:
+              low = p.name.lower()
+              if low in blocked_names or p.suffix.lower() in blocked_exts or low.endswith(blocked_suffixes):
                   bad.append(f"Blocked file committed: {rel}")
               elif p.exists() and p.stat().st_size > 5 * 1024 * 1024:
                   bad.append(f"Oversized file (>5MB): {rel} ({p.stat().st_size} bytes)")
@@ -44,11 +47,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install package & audit upstream Quilt patches
+      - name: Install package, audit patches & run static REA + 100x benchmarks
+        shell: bash
         run: |
           python -m pip install -e .
           luminara-forge audit-patches
           luminara-forge compile-overlay
+          luminara-forge verify-upstream-patches
+          luminara-forge verify-rea --static-only
+          luminara-forge benchmark-100x
 
       - name: Run strict unit, security & A/B test suite
         working-directory: chromium-forge

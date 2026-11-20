@@ -1,0 +1,19 @@
+--- a/content/public/common/url_constants.h
++++ b/content/public/common/url_constants.h
+@@ -19,6 +19,7 @@
+ inline constexpr char kChromeDevToolsScheme[] = "devtools";
+ inline constexpr char kChromeErrorScheme[] = "chrome-error";
+ inline constexpr char kChromeUIScheme[] = "chrome";  // Used for WebUIs.
++inline constexpr char kLuminaraUIScheme[] = "luminara";  // Luminara native WebUI scheme.
+ inline constexpr char kChromeNativeScheme[] = "chrome-native";
+ inline constexpr char kChromeUIUntrustedScheme[] = "chrome-untrusted";
+ inline constexpr char kViewSourceScheme[] = "view-source";
+@@ -57,6 +58,8 @@
+ inline constexpr char kChromeUIUntrustedResourcesURL[] =
+     "chrome-untrusted://resources/";
+ inline constexpr char kChromeUIWebRTCInternalsHost[] = "webrtc-internals";
++inline constexpr char kLuminaraDeckHost[] = "deck";
++inline constexpr char kLuminaraWorkspaceHost[] = "workspace";
+ #if BUILDFLAG(ENABLE_VR)
+ inline constexpr char kChromeUIWebXrInternalsHost[] = "webxr-internals";
+ #endif

@@ -32,7 +32,7 @@ WIN_REPO = STUDIO_ROOT / "ungoogled-chromium-windows"
 
 
 class TestLuminaraAgenticObligations(unittest.TestCase):
-    def test_obl08_comet_workspace_pages_and_mv3_copilot(self) -> None:
+    def test_obl08_luminara_workspace_pages_and_mv3_copilot(self) -> None:
         prof = ForkProfile()
         self.assertEqual(prof.brand_name, "Luminara Browser")
         self.assertEqual(prof.slug, "luminara-browser")
@@ -56,11 +56,11 @@ class TestLuminaraAgenticObligations(unittest.TestCase):
 
     def test_obl09_tab_lease_collision_and_human_override(self) -> None:
         mgr = TabLeaseManager()
-        mgr.acquire("tab-1", agent_id="claude-code", ttl_sec=60.0)
+        mgr.acquire("tab-1", agent_id="luminara-worker-a", ttl_sec=60.0)
         with self.assertRaises(CDPError):
-            mgr.acquire("tab-1", agent_id="hermes-agent", ttl_sec=60.0)
+            mgr.acquire("tab-1", agent_id="luminara-worker-b", ttl_sec=60.0)
         # Same agent re-acquiring refreshes cleanly
-        mgr.acquire("tab-1", agent_id="claude-code", ttl_sec=60.0)
+        mgr.acquire("tab-1", agent_id="luminara-worker-a", ttl_sec=60.0)
         # Human takeover immediately preempts active lease
         mgr.force_human_override("tab-1")
         self.assertIsNone(mgr.get_active("tab-1"))
@@ -136,7 +136,7 @@ class TestLuminaraAgenticObligations(unittest.TestCase):
     def test_obl14_verifiable_lum_receipts_and_full_14_obligation_suite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ledger = ActionLedger(Path(tmp) / "ledger.jsonl")
-            rec = ledger.record("claude-code", "snapshot", "tab-9", {"show_badges": True}, summary="Indexed DOM")
+            rec = ledger.record("luminara-agent", "snapshot", "tab-9", {"show_badges": True}, summary="Indexed DOM")
             self.assertTrue(rec["receipt_id"].startswith("LUM-"))
             self.assertEqual(len(rec["sha256"]), 64)
             self.assertEqual(len(ledger.recent(5)), 1)

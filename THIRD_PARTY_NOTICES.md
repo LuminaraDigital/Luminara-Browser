@@ -2,7 +2,7 @@
 
 Luminara Browser's clean-room Python Forge (`chromium-forge/`), Cloudflare edge worker (`cloudflare/`), and agent skill (`skills/luminara-browser/`) are licensed under the MIT License (see `LICENSE`).
 
-This repository includes upstream Quilt patch sets and build metadata from `ungoogled-software/ungoogled-chromium` and `ungoogled-software/ungoogled-chromium-windows` under the BSD 3-Clause License:
+This repository includes upstream Quilt patch sets and build metadata from `ungoogled-software/ungoogled-chromium` and `ungoogled-software/ungoogled-chromium-windows` under the BSD 3-Clause License (and prebuilt portable binary bundles under `dist/.../App/` package upstream Chromium binaries governed by Chromium's BSD 3-Clause License and `chrome://credits`):
 
 ---
 

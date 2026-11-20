@@ -1,5 +1,5 @@
 /**
- * Luminara Browser — Cloudflare Edge Worker & Agent Discovery Router
+ * Luminara Browser v3.0.0 — Cloudflare Edge Worker & Agent Discovery Router
  * Serves /api/health, /api/mcp-spec, /.well-known/agent.json, /llms.txt, /llms-full.txt, /robots.txt,
  * and static Precision Dark portal assets with strict security headers.
  */
@@ -17,13 +17,33 @@ const MCP_TOOLS = [
   "browser_run_goal",
   "browser_bulk_extract",
   "browser_handoff_resume",
+  "browser_dialog",
+  "browser_vault",
+  "browser_exec_pipeline",
+  "browser_playbooks",
+  "browser_perception_axtree",
+  "webmcp_list_tools",
+  "webmcp_call_tool",
+  "browser_mutation_guard",
+  "browser_workspace",
+  "browser_hibernate_tabs",
 ];
 
-function withSecurityHeaders(res, extra = {}) {
+const MCP_RESOURCES = [
+  "luminara://tabs/live",
+  "luminara://ledger/recent",
+  "luminara://ledger/verify",
+  "luminara://vault/entries",
+  "luminara://playbooks/list",
+  "luminara://workspaces/list",
+  "luminara://mutations/status",
+];
+
+function withSecurityHeaders(res, extra = {}, isHead = false) {
   const headers = new Headers(res.headers);
   headers.set(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:8796 http://localhost:8796; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
   );
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("X-Frame-Options", "DENY");
@@ -36,47 +56,70 @@ function withSecurityHeaders(res, extra = {}) {
   for (const [k, v] of Object.entries(extra)) {
     headers.set(k, v);
   }
-  return new Response(res.body, {
+  return new Response(isHead ? null : res.body, {
     status: res.status,
     statusText: res.statusText,
     headers,
   });
 }
 
-function jsonResponse(payload, status = 200, extraHeaders = {}) {
+function jsonResponse(payload, status = 200, extraHeaders = {}, isHead = false) {
+  const raw = JSON.stringify(payload, null, 2);
   return withSecurityHeaders(
-    new Response(JSON.stringify(payload, null, 2), {
+    new Response(raw, {
       status,
-      headers: { "Content-Type": "application/json; charset=utf-8" },
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Length": String(new TextEncoder().encode(raw).byteLength),
+      },
     }),
-    extraHeaders
+    extraHeaders,
+    isHead
   );
 }
 
-function textResponse(body, contentType = "text/plain; charset=utf-8", status = 200, extraHeaders = {}) {
+function textResponse(body, contentType = "text/plain; charset=utf-8", status = 200, extraHeaders = {}, isHead = false) {
   return withSecurityHeaders(
     new Response(body, {
       status,
-      headers: { "Content-Type": contentType },
+      headers: {
+        "Content-Type": contentType,
+        "Content-Length": String(new TextEncoder().encode(body).byteLength),
+      },
     }),
-    extraHeaders
+    extraHeaders,
+    isHead
   );
 }
 
 export default {
   async fetch(request, env) {
+    const res = await this._route(request, env);
+    if (request.method === "HEAD" && res.body !== null) {
+      return new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers });
+    }
+    return res;
+  },
+
+  async _route(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
-    const version = env.APP_VERSION || "2.1.0";
+    const version = env.APP_VERSION || "3.0.0";
     const chromiumBase = env.CHROMIUM_BASE || "157.0.8103.78-1.1";
-    const repo = env.GITHUB_REPO || "https://github.com/luminara-digital/luminara-browser";
+    const repo = env.GITHUB_REPO || "https://github.com/LuminaraDigital/Luminara-Browser";
     const localMcp = env.LOCAL_MCP_ENDPOINT || "http://127.0.0.1:8796/api/agent/mcp";
 
     if (request.method === "OPTIONS") {
       return withSecurityHeaders(new Response(null, { status: 204 }), {
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Accept",
+        "Access-Control-Max-Age": "86400",
       });
+    }
+
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return jsonResponse({ error: "method_not_allowed" }, 405, { Allow: "GET, HEAD, OPTIONS" });
     }
 
     if (path === "/api/health") {
@@ -85,6 +128,7 @@ export default {
         service: "luminara-browser-edge",
         version,
         chromium_base: chromiumBase,
+        mcp_tool_count: MCP_TOOLS.length,
         colo: request.cf?.colo || "local",
         ts: new Date().toISOString(),
       });
@@ -94,17 +138,15 @@ export default {
       return jsonResponse(
         {
           protocolVersion: MCP_PROTOCOL_VERSION,
+          version,
           local_endpoint: localMcp,
           cdp_target: "http://127.0.0.1:9229",
           hitl_handoff_state: "PAUSED_HUMAN_HANDOFF",
           untrusted_dom_fencing: "<untrusted_page_data>",
           receipt_format: "LUM-<unix_ms>-<sha256[:10]>",
+          receipt_signature_scheme: "LUM-SIG-V2 (lum-hmac256)",
           tools: MCP_TOOLS,
-          resources: [
-            "luminara://tabs/live",
-            "luminara://ledger/recent",
-            "luminara://ledger/verify",
-          ],
+          resources: MCP_RESOURCES,
         },
         200,
         { "Access-Control-Allow-Origin": "*" }
@@ -125,7 +167,9 @@ export default {
           auth_scheme: "Loopback Host+UI-Key + Optional Bearer LUMINARA_AGENT_TOKEN",
           hitl_handoff_state: "PAUSED_HUMAN_HANDOFF",
           receipt_prefix: "LUM-",
+          receipt_signature_scheme: "LUM-SIG-V2 (lum-hmac256)",
           tools: MCP_TOOLS,
+          resources: MCP_RESOURCES,
         },
         200,
         { "Access-Control-Allow-Origin": "*" }
@@ -134,16 +178,18 @@ export default {
 
     if (path === "/llms.txt" || path === "/llms-full.txt") {
       const baseDoc = [
-        "# Luminara Browser",
-        `> Privacy-hardened Ungoogled-Chromium ${chromiumBase} desktop browser built for simultaneous Human + AI Agent co-browsing via Loopback CDP (:9229) and MCP v2 (:8796).`,
+        `# Luminara Browser v${version}`,
+        `> Privacy-hardened Ungoogled-Chromium ${chromiumBase} desktop browser built for simultaneous Human + AI Agent co-browsing via Multiplexed Loopback CDP (:9229) and 20-Tool MCP v2 (:8796).`,
         "",
         "## Core Capabilities",
-        "- Zero Google Telemetry: `.void0` domain substitution + `trk:` protocol sink + fingerprint noise.",
-        "- Simultaneous Co-Browsing: Humans and external AI agents (Claude Code, Antigravity, Hermes, Cursor) share live tabs via `TabLeaseManager` with 1-click Human Takeover.",
-        "- Set-of-Marks `[1..N]` DOM Indexing: Deterministic CSS selectors + `<untrusted_page_data>` prompt-injection fencing (`96.7%` token reduction).",
-        "- Parallel BulkEngine & Generative UI Studio: Per-domain adaptive concurrency (`4.5x+` speedup), sortable comparison matrices, and 50-slot Undo/Redo.",
-        "- Safe HITL Co-Browsing: Login, 2FA, payment, and verification walls pause cleanly (`PAUSED_HUMAN_HANDOFF`) for human completion.",
-        "- Cryptographic Accountability: Hash-chained SHA-256 `LUM-*` action receipts (`/api/agent/ledger/verify`).",
+        "- Zero Google Telemetry & Privacy Shield v3: `.void0` domain trap + `trk:` protocol sink + eTLD+1 deterministic farbling.",
+        "- Simultaneous Co-Browsing: Humans and MCP v2 AI agents share live tabs via `TabLeaseManager` + `MultiplexedCDPPool` (`<1.5ms` RTT) with 1-click Human Takeover.",
+        "- Hybrid Perception & Iframe/Dialog Supervision: Blink `AXTree` + Shadow-DOM + OOPIF traversal + Set-of-Marks `[1..N]` indexing + non-blocking JS Dialog Supervisor.",
+        "- Origin-Pinned DPAPI/AEAD Model-Blind Vault: Injects credentials & RFC 6238 TOTP codes over loopback CDP after synchronous origin verification without exposing secrets to prompts or logs.",
+        "- Zero-Context AST Pipeline Sandbox & Self-Improving Playbooks: Multi-step Python/declarative pipelines in 1 turn + zero-LLM replay of verified domain playbooks.",
+        "- W3C WebMCP & Network Mutation Firewall: Structured `navigator.modelContext` tools + `Fetch.enable` savepoint approval for `POST`/`PUT`/`PATCH`/`DELETE`.",
+        "- Parallel BulkEngine, SQLite FTS5 Knowledge Workspaces & Generative UI Studio: `4.5x+` parallel throughput, tab hibernation, and 50-slot Undo/Redo.",
+        "- Cryptographic Accountability & Binary-Safe Redaction: Hash-chained + HMAC-signed `LUM-*` receipts (`/api/agent/ledger/verify`) scrubbed via `LuminaraRedactor`.",
         "",
         "## Quickstart & Endpoints",
         `- Repository & Releases: ${repo}`,
@@ -155,19 +201,36 @@ export default {
       if (path === "/llms-full.txt") {
         baseDoc.push(
           "",
-          "## MCP v2 Tool Inventory",
+          `## MCP v2 Tool Inventory (${MCP_TOOLS.length} Tools)`,
           ...MCP_TOOLS.map((t) => `- \`${t}\``),
+          "",
+          `## MCP v2 Resource Inventory (${MCP_RESOURCES.length} Resources)`,
+          ...MCP_RESOURCES.map((r) => `- \`${r}\``),
           "",
           "## CLI Commands",
           "- `luminara-forge build-portable`",
           "- `luminara-forge agent-daemon --port 8796 --cdp-port 9229`",
+          "- `luminara-forge verify-upstream-patches` (Zero-fuzz C++ patch gate)",
           "- `luminara-forge verify-rea` (14/14 REA Reconstruction Gate)",
-          "- `luminara-forge benchmark` (AB-01..AB-04 Live Benchmark Suite)"
+          "- `luminara-forge benchmark` (AB-01..AB-04 Live A/B Suite)",
+          "- `luminara-forge benchmark-100x` (BM-01..BM-06 100x Engine Suite)"
         );
       }
       return textResponse(baseDoc.join("\n") + "\n", "text/markdown; charset=utf-8", 200, {
         "Access-Control-Allow-Origin": "*",
       });
+    }
+
+    if (path === "/sitemap.xml") {
+      const xml = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+        `  <url><loc>${url.origin}/</loc></url>`,
+        `  <url><loc>${url.origin}/llms.txt</loc></url>`,
+        `  <url><loc>${url.origin}/llms-full.txt</loc></url>`,
+        "</urlset>",
+      ].join("\n");
+      return textResponse(xml, "application/xml; charset=utf-8");
     }
 
     if (path === "/robots.txt") {
@@ -187,14 +250,22 @@ export default {
         "User-agent: Bytespider",
         "Disallow: /",
         "",
-        `Sitemap: ${url.origin}/llms.txt`,
+        `Sitemap: ${url.origin}/sitemap.xml`,
         "",
       ].join("\n");
       return textResponse(robots);
     }
 
+    // Never fall through to SPA index.html for unknown /api/* endpoints
+    if (path.startsWith("/api/")) {
+      return jsonResponse({ error: "Not found", path }, 404);
+    }
+
     if (env.ASSETS && typeof env.ASSETS.fetch === "function") {
       const assetRes = await env.ASSETS.fetch(request);
+      if (assetRes.status === 404) {
+        return jsonResponse({ error: "Not found", path }, 404);
+      }
       return withSecurityHeaders(assetRes);
     }
 

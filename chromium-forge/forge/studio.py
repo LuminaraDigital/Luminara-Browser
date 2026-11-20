@@ -8,6 +8,7 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
+import time
 from typing import Any
 from urllib.parse import urlparse
 
@@ -64,6 +65,7 @@ def make_studio_handler(
     class StudioRequestHandler(LoopbackJSONHandler):
         local_ui_key = ui_key
         allow_extension_origins = False
+        forge_root_dir = forge_root
 
         def do_GET(self) -> None:  # noqa: N802
             if not self.check_loopback_security(is_post=False):
@@ -115,7 +117,8 @@ def make_studio_handler(
                 data = self.read_json_dict()
                 if parsed.path == "/api/compile":
                     allowed = {f.name for f in ForkProfile.__dataclass_fields__.values()}
-                    prof = ForkProfile(**{k: v for k, v in data.items() if k in allowed})
+                    merged_fields = {**_current_profile().to_dict(), **{k: v for k, v in data.items() if k in allowed}}
+                    prof = ForkProfile(**merged_fields)
                     prof.save(profile_path)
                     artifacts = _read_overlay_artifacts(prof)
                     self.send_json({"ok": True, "profile": prof.to_dict(), "artifacts": artifacts})
@@ -139,7 +142,7 @@ def make_studio_handler(
                     prof = _current_profile()
                     dist_dir = (dist_root / f"{prof.slug}-win64").resolve()
                     chrome_exe = dist_dir / "App" / "chrome.exe"
-                    if not chrome_exe.exists():
+                    if cache_zip.exists() or not chrome_exe.exists():
                         assemble_portable_distribution(cache_zip, prof, dist_root)
 
                     creation_flags = (
@@ -166,17 +169,16 @@ def make_studio_handler(
                             creationflags=creation_flags,
                             close_fds=True,
                         )
+                        for _ in range(20):
+                            if _port_is_listening(prof.agent_port):
+                                break
+                            time.sleep(0.1)
 
-                    ntp_path = dist_dir / "App" / "luminara_pages" / "newtab.html"
-                    ntp_url = (
-                        f"http://127.0.0.1:{prof.agent_port}/newtab"
-                        if prof.enable_agent_cobrowsing
-                        else ntp_path.resolve().as_uri()
-                    )
                     ext_paths = [str(dist_dir / "App" / "extensions" / "forge-shield")]
-                    copilot_ext = dist_dir / "App" / "extensions" / "luminara-copilot"
-                    if copilot_ext.exists():
-                        ext_paths.append(str(copilot_ext))
+                    for ext_name in ("luminara-copilot", "luminara-newtab"):
+                        ext_candidate = dist_dir / "App" / "extensions" / ext_name
+                        if ext_candidate.exists():
+                            ext_paths.append(str(ext_candidate))
                     extra_cdp = (
                         [
                             f"--remote-debugging-port={prof.cdp_port}",
@@ -188,11 +190,10 @@ def make_studio_handler(
                     cmd = [
                         str(chrome_exe),
                         f"--user-data-dir={dist_dir / 'Profile'}",
-                        f"--custom-ntp={ntp_url}",
                         f"--load-extension={','.join(ext_paths)}",
                         *prof.runtime_switches(),
                         *extra_cdp,
-                        ntp_url,
+                        "chrome://newtab",
                     ]
                     subprocess.Popen(cmd, creationflags=creation_flags, close_fds=True)
                     self.send_json({"ok": True, "launched": str(chrome_exe), "cdp_port": prof.cdp_port})

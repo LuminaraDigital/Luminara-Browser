@@ -280,11 +280,12 @@ def build_luminara_newtab_html(
         </div>
       </section>
 
-      <section class="card span-5" aria-labelledby="cometCardHead">
+      <section class="card span-5" aria-labelledby="workspaceCardHead">
         <div class="card-head">
-          <span class="card-title" id="cometCardHead">Comet Workspace &amp; Agent Memory</span>
-          <div class="subtabs" role="tablist" aria-label="Comet Workspace Panes">
+          <span class="card-title" id="workspaceCardHead">Luminara Workspace &amp; Agent Memory</span>
+          <div class="subtabs" role="tablist" aria-label="Luminara Workspace Panes">
             <button class="btn-ghost active" type="button" role="tab" aria-selected="true" data-pane="todos">Tasks</button>
+            <button class="btn-ghost" type="button" role="tab" aria-selected="false" data-pane="vault">Vault &amp; Playbooks</button>
             <button class="btn-ghost" type="button" role="tab" aria-selected="false" data-pane="settings">Settings</button>
             <button class="btn-ghost" type="button" role="tab" aria-selected="false" data-pane="mcp">MCP Connect</button>
           </div>
@@ -315,6 +316,10 @@ def build_luminara_newtab_html(
             <span>Show `[1..N]` Set-of-Marks HUD on Agent Snapshots</span>
             <input type="checkbox" id="cfgShowHud" checked />
           </label>
+          <label class="row-item" for="cfgPassport">
+            <span>Agent Passport Token (optional)</span>
+            <input class="todo-input" type="password" id="cfgPassport" style="max-width:160px;" autocomplete="off" placeholder="Bearer token" />
+          </label>
           <div class="row-item">
             <span>Active Ungoogled Switches</span>
             <span class="mono" id="swCountBadge">0</span>
@@ -322,9 +327,19 @@ def build_luminara_newtab_html(
           <button class="btn-primary" type="button" id="btnSaveSettings">Save Preferences</button>
         </div>
 
+        <div id="pane-vault" style="display:none; gap:8px;">
+          <div class="row-item">
+            <span class="mono" id="vaultSummaryLbl">Loading DPAPI Vault &amp; Domain Playbooks...</span>
+            <button class="btn-ghost" type="button" id="btnSyncVault">Refresh</button>
+          </div>
+          <div class="list-scroll" id="vaultPlaybookList">
+            <div class="row-item"><span class="mono">Syncing origin-pinned handles...</span></div>
+          </div>
+        </div>
+
         <div id="pane-mcp" style="display:none; gap:8px;">
           <div class="row-item" style="display:block;">
-            <div class="mono" style="margin-bottom:4px;">MCP v2 JSON-RPC (`2025-06-18`)</div>
+            <div class="mono" style="margin-bottom:4px;">MCP v2 JSON-RPC (`2025-06-18` · 20 Tools · 7 Resources)</div>
             <code>POST {daemon_base}/api/agent/mcp</code>
           </div>
           <div class="row-item" style="display:block;">
@@ -332,7 +347,7 @@ def build_luminara_newtab_html(
             <code>GET {daemon_base}/llms.txt</code><br />
             <code>GET {daemon_base}/.well-known/agent.json</code>
           </div>
-          <div class="mono">Compatible with Antigravity, Claude Code, Hermes Agent, Cursor, and any MCP client.</div>
+          <div class="mono">Compatible with any standard MCP v2 (`2025-06-18`) agent client.</div>
         </div>
       </section>
     </div>
@@ -368,9 +383,26 @@ def build_luminara_newtab_html(
       return node;
     }}
 
+    const SESSION_TOK = (() => {{
+      const KEY_SS = 'luminara_browser:session_tok';
+      const m = (location.hash || '').match(/(?:^#|&)lum_tok(?:en)?=([^&]+)/);
+      if (m) {{
+        const tok = decodeURIComponent(m[1]);
+        try {{
+          sessionStorage.setItem(KEY_SS, tok);
+          history.replaceState(null, '', location.pathname + location.search);
+        }} catch (_e) {{}}
+        return tok;
+      }}
+      try {{ return sessionStorage.getItem(KEY_SS) || ''; }} catch (_e) {{ return ''; }}
+    }})();
+
     function apiHeaders(isJson) {{
       const h = {{}};
-      if (UI_KEY) h['X-Luminara-UI-Key'] = UI_KEY;
+      const uiAuth = UI_KEY || SESSION_TOK;
+      if (uiAuth) h['X-Luminara-UI-Key'] = uiAuth;
+      const passport = (loadSettings().passportToken || '').trim();
+      if (passport) h['Authorization'] = 'Bearer ' + passport;
       if (isJson) h['Content-Type'] = 'application/json';
       return h;
     }}
@@ -408,18 +440,23 @@ def build_luminara_newtab_html(
       const s = loadSettings();
       document.getElementById('cfgOperator').value = s.operator || 'Luminara Operator';
       document.getElementById('cfgShowHud').checked = s.showHud !== false;
+      const pEl = document.getElementById('cfgPassport');
+      if (pEl) pEl.value = s.passportToken || '';
       document.getElementById('swCountBadge').textContent = SWITCHES.length + ' active';
       if (s.operator) {{
         document.getElementById('greetingTitle').textContent = BRAND + ' · ' + s.operator;
       }}
     }}
     document.getElementById('btnSaveSettings').addEventListener('click', () => {{
+      const pEl = document.getElementById('cfgPassport');
       const s = {{
         operator: document.getElementById('cfgOperator').value.trim() || 'Luminara Operator',
-        showHud: document.getElementById('cfgShowHud').checked
+        showHud: document.getElementById('cfgShowHud').checked,
+        passportToken: pEl ? pEl.value.trim() : ''
       }};
       localStorage.setItem(KEY_SETTINGS, JSON.stringify(s));
       applySettings();
+      syncDaemon();
       notify('Saved workspace settings.');
     }});
 
@@ -431,9 +468,10 @@ def build_luminara_newtab_html(
           b.classList.toggle('active', active);
           b.setAttribute('aria-selected', String(active));
         }});
-        ['todos', 'settings', 'mcp'].forEach(p => {{
+        ['todos', 'vault', 'settings', 'mcp'].forEach(p => {{
           document.getElementById('pane-' + p).style.display = (p === target) ? 'grid' : 'none';
         }});
+        if (target === 'vault') syncVaultAndPlaybooks();
       }});
     }});
 
@@ -498,12 +536,115 @@ def build_luminara_newtab_html(
       list.unshift({{ id: 't_' + Date.now(), text: val, prio: document.getElementById('todoPrio').value, done: false }});
       inp.value = '';
       saveTodos(list);
-      notify('Task added to Comet Workspace.');
+      notify('Task added to Luminara Workspace.');
     }});
+
+    async function syncVaultAndPlaybooks() {{
+      const sumLbl = document.getElementById('vaultSummaryLbl');
+      const vBox = document.getElementById('vaultPlaybookList');
+      const btn = document.getElementById('btnSyncVault');
+      btn.disabled = true;
+      sumLbl.textContent = 'Syncing Vault & Playbooks...';
+      try {{
+        const [vRes, pRes] = await Promise.all([apiFetch('/api/agent/vault'), apiFetch('/api/agent/playbooks')]);
+        const entries = vRes.entries || [];
+        const pbs = pRes.playbooks || [];
+        sumLbl.textContent = `${{entries.length}} Vault handle(s) · ${{pbs.length}} Playbook(s)`;
+        vBox.replaceChildren();
+        if (!entries.length && !pbs.length) {{
+          const emptyRow = el('div', 'row-item');
+          emptyRow.appendChild(el('span', 'mono', 'No vault handles or learned playbooks yet.'));
+          vBox.appendChild(emptyRow);
+        }} else {{
+          entries.forEach(en => {{
+            const r = el('div', 'row-item');
+            const left = el('div');
+            left.style.cssText = 'display:grid;min-width:0;';
+            left.append(el('strong', '', '🔐 ' + (en.vault_id || '')), el('span', 'mono', en.origin || ''));
+            const acts = el('div');
+            acts.style.cssText = 'display:flex;gap:4px;align-items:center;flex-wrap:wrap;';
+            const bFill = el('button', 'btn-ghost', 'Fill');
+            bFill.type = 'button';
+            bFill.onclick = async () => {{
+              try {{
+                const res = await apiFetch('/api/agent/vault', {{ action: 'fill', vault_id: en.vault_id }});
+                notify('Filled ' + ((res.filled_fields || []).join(', ') || 'handle'));
+              }} catch (err) {{ notify('Vault fill failed: ' + err.message); }}
+            }};
+            acts.appendChild(bFill);
+            if (en.has_totp) {{
+              const bOtp = el('button', 'btn-ghost', 'TOTP');
+              bOtp.type = 'button';
+              bOtp.onclick = async () => {{
+                try {{
+                  await apiFetch('/api/agent/vault', {{ action: 'enter_totp', vault_id: en.vault_id }});
+                  notify('Injected 6-digit TOTP for ' + en.vault_id);
+                }} catch (err) {{ notify('TOTP failed: ' + err.message); }}
+              }};
+              acts.appendChild(bOtp);
+            }}
+            const bDel = el('button', 'btn-ghost', '×');
+            bDel.type = 'button';
+            bDel.setAttribute('aria-label', 'Delete vault entry ' + en.vault_id);
+            bDel.onclick = async () => {{
+              try {{
+                await apiFetch('/api/agent/vault', {{ action: 'delete', vault_id: en.vault_id }});
+                notify('Deleted vault handle ' + en.vault_id);
+                syncVaultAndPlaybooks();
+              }} catch (err) {{ notify('Delete failed: ' + err.message); }}
+            }};
+            acts.appendChild(bDel);
+            r.append(left, acts);
+            vBox.appendChild(r);
+          }});
+          pbs.forEach(pb => {{
+            const r = el('div', 'row-item');
+            const left = el('div');
+            left.style.cssText = 'display:grid;min-width:0;';
+            left.append(el('strong', '', '⚡ ' + (pb.domain || '')), el('span', 'mono', (pb.goal || pb.playbook_id || '') + ' (' + (pb.steps ? pb.steps.length : 0) + ' steps)'));
+            const acts = el('div');
+            acts.style.cssText = 'display:flex;gap:4px;align-items:center;';
+            const bRep = el('button', 'btn-ghost', 'Replay');
+            bRep.type = 'button';
+            bRep.onclick = async () => {{
+              try {{
+                const res = await apiFetch('/api/agent/playbooks', {{ action: 'replay', playbook_id: pb.playbook_id }});
+                notify('Playbook ' + (res.status || 'COMPLETED'));
+              }} catch (err) {{ notify('Replay failed: ' + err.message); }}
+            }};
+            const bDel = el('button', 'btn-ghost', '×');
+            bDel.type = 'button';
+            bDel.setAttribute('aria-label', 'Delete playbook ' + pb.playbook_id);
+            bDel.onclick = async () => {{
+              try {{
+                await apiFetch('/api/agent/playbooks', {{ action: 'delete', playbook_id: pb.playbook_id }});
+                notify('Deleted playbook ' + pb.playbook_id);
+                syncVaultAndPlaybooks();
+              }} catch (err) {{ notify('Delete failed: ' + err.message); }}
+            }};
+            acts.append(bRep, bDel);
+            r.append(left, acts);
+            vBox.appendChild(r);
+          }});
+        }}
+      }} catch (_err) {{
+        sumLbl.textContent = 'Daemon offline — unable to load Vault & Playbooks.';
+        vBox.replaceChildren();
+        const errR = el('div', 'row-item');
+        const retryB = el('button', 'btn-ghost', 'Retry');
+        retryB.type = 'button';
+        retryB.onclick = syncVaultAndPlaybooks;
+        errR.append(el('span', 'mono', 'Connect Agent Daemon then retry.'), retryB);
+        vBox.appendChild(errR);
+      }} finally {{
+        btn.disabled = false;
+      }}
+    }}
+    document.getElementById('btnSyncVault').addEventListener('click', syncVaultAndPlaybooks);
 
     const placeholders = {{
       search: 'Search privately or enter any URL...',
-      goal: 'Describe an autonomous browser goal (e.g., "Type \'Quantum\' and click Apply Filter")...',
+      goal: 'Describe an autonomous browser goal (e.g., "Type \\\'Quantum\\\' and click Apply Filter")...',
       bulk: 'Paste comma- or space-separated URLs for parallel background tab extraction...'
     }};
     document.querySelectorAll('.mode-tab').forEach(btn => {{
@@ -570,6 +711,7 @@ def build_luminara_newtab_html(
           setTimeout(() => {{ window.location.href = WORKSPACE_URI; }}, 550);
         }}
       }} catch (err) {{
+        if (err && err.name === 'AbortError') return;
         statusEl.textContent = 'Action failed: ' + (err.message || String(err)) + ' — Verify Agent Daemon is online and retry.';
       }} finally {{
         activeAbort = null;

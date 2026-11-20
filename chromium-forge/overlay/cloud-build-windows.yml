@@ -1,10 +1,10 @@
-name: Build Luminara Browser (Windows x64)
+name: Build Luminara Browser 16-Stage Cloud Compiler (Windows x64)
 
 on:
   workflow_dispatch:
     inputs:
       stage_limit:
-        description: 'Max 3.5h compilation stages'
+        description: 'Max 3.5h compilation stages (1..16)'
         required: false
         default: '16'
 
@@ -18,13 +18,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Run Chromium Forge REA Pre-Flight Gate
-        run: python -m forge verify-rea
+      - name: Run Chromium Forge REA + Upstream Patch Pre-Flight Gate
+        shell: bash
+        run: |
+          cd chromium-forge
+          python -W error -m unittest discover -s tests -v
+          python -m forge verify-upstream-patches
+          python -m forge verify-rea --static-only
 
-  # Mirrors ungoogled-chromium-windows 16-stage checkpointed Ninja pipeline
-  # Each stage compiles for up to 3.5h (exit code 124 checkpoints build/src into Actions Artifacts)
+  # 16-stage checkpointed Ninja + ThinLTO + PGO pipeline (exit 124 checkpoints cleanly across 3.5h windows)
   compile-stage-1:
     needs: verify-custom-patches
+    if: always() && needs.verify-custom-patches.result == 'success' && fromJSON(inputs.stage_limit || '16') >= 1
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -33,10 +42,578 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install V8 Metagen Clang Bindings
-        run: python -m pip install httplib2==0.22.0 clang==21.1.7
-      - name: Apply Luminara Browser Overlay & StartCheckpointed Build
+      - name: Install V8 Metagen Clang Bindings & Forge Package
         run: |
-          python -m forge export-windows-overlay --profile fork.json --windows-repo ./ungoogled-chromium-windows
+          python -m pip install -e .
+          python -m pip install httplib2==0.22.0 clang==21.1.7
+      - name: Apply Luminara Browser Overlay & Run Ninja Stage 1/16 (PGO + ThinLTO)
+        run: |
+          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
           cd ungoogled-chromium-windows
-          python build.py --ci -j 2 
+          python build.py --ci -j 4 
+      - name: Checkpoint Stage 1 Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminara-stage-1-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+          retention-days: 3
+  compile-stage-2:
+    needs: compile-stage-1
+    if: always() && needs.compile-stage-1.result == 'success' && fromJSON(inputs.stage_limit || '16') >= 2
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Checkpointed Build Tree (Stage 1)
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-1-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+      - name: Install V8 Metagen Clang Bindings & Forge Package
+        run: |
+          python -m pip install -e .
+          python -m pip install httplib2==0.22.0 clang==21.1.7
+      - name: Apply Luminara Browser Overlay & Run Ninja Stage 2/16 (PGO + ThinLTO)
+        run: |
+          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          cd ungoogled-chromium-windows
+          python build.py --ci -j 4 
+      - name: Checkpoint Stage 2 Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminara-stage-2-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+          retention-days: 3
+  compile-stage-3:
+    needs: compile-stage-2
+    if: always() && needs.compile-stage-2.result == 'success' && fromJSON(inputs.stage_limit || '16') >= 3
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Checkpointed Build Tree (Stage 2)
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-2-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+      - name: Install V8 Metagen Clang Bindings & Forge Package
+        run: |
+          python -m pip install -e .
+          python -m pip install httplib2==0.22.0 clang==21.1.7
+      - name: Apply Luminara Browser Overlay & Run Ninja Stage 3/16 (PGO + ThinLTO)
+        run: |
+          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          cd ungoogled-chromium-windows
+          python build.py --ci -j 4 
+      - name: Checkpoint Stage 3 Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminara-stage-3-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+          retention-days: 3
+  compile-stage-4:
+    needs: compile-stage-3
+    if: always() && needs.compile-stage-3.result == 'success' && fromJSON(inputs.stage_limit || '16') >= 4
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Checkpointed Build Tree (Stage 3)
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-3-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+      - name: Install V8 Metagen Clang Bindings & Forge Package
+        run: |
+          python -m pip install -e .
+          python -m pip install httplib2==0.22.0 clang==21.1.7
+      - name: Apply Luminara Browser Overlay & Run Ninja Stage 4/16 (PGO + ThinLTO)
+        run: |
+          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          cd ungoogled-chromium-windows
+          python build.py --ci -j 4 
+      - name: Checkpoint Stage 4 Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminara-stage-4-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+          retention-days: 3
+  compile-stage-5:
+    needs: compile-stage-4
+    if: always() && needs.compile-stage-4.result == 'success' && fromJSON(inputs.stage_limit || '16') >= 5
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Checkpointed Build Tree (Stage 4)
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-4-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+      - name: Install V8 Metagen Clang Bindings & Forge Package
+        run: |
+          python -m pip install -e .
+          python -m pip install httplib2==0.22.0 clang==21.1.7
+      - name: Apply Luminara Browser Overlay & Run Ninja Stage 5/16 (PGO + ThinLTO)
+        run: |
+          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          cd ungoogled-chromium-windows
+          python build.py --ci -j 4 
+      - name: Checkpoint Stage 5 Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminara-stage-5-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+          retention-days: 3
+  compile-stage-6:
+    needs: compile-stage-5
+    if: always() && needs.compile-stage-5.result == 'success' && fromJSON(inputs.stage_limit || '16') >= 6
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Checkpointed Build Tree (Stage 5)
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-5-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+      - name: Install V8 Metagen Clang Bindings & Forge Package
+        run: |
+          python -m pip install -e .
+          python -m pip install httplib2==0.22.0 clang==21.1.7
+      - name: Apply Luminara Browser Overlay & Run Ninja Stage 6/16 (PGO + ThinLTO)
+        run: |
+          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          cd ungoogled-chromium-windows
+          python build.py --ci -j 4 
+      - name: Checkpoint Stage 6 Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminara-stage-6-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+          retention-days: 3
+  compile-stage-7:
+    needs: compile-stage-6
+    if: always() && needs.compile-stage-6.result == 'success' && fromJSON(inputs.stage_limit || '16') >= 7
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Checkpointed Build Tree (Stage 6)
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-6-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+      - name: Install V8 Metagen Clang Bindings & Forge Package
+        run: |
+          python -m pip install -e .
+          python -m pip install httplib2==0.22.0 clang==21.1.7
+      - name: Apply Luminara Browser Overlay & Run Ninja Stage 7/16 (PGO + ThinLTO)
+        run: |
+          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          cd ungoogled-chromium-windows
+          python build.py --ci -j 4 
+      - name: Checkpoint Stage 7 Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminara-stage-7-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+          retention-days: 3
+  compile-stage-8:
+    needs: compile-stage-7
+    if: always() && needs.compile-stage-7.result == 'success' && fromJSON(inputs.stage_limit || '16') >= 8
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Checkpointed Build Tree (Stage 7)
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-7-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+      - name: Install V8 Metagen Clang Bindings & Forge Package
+        run: |
+          python -m pip install -e .
+          python -m pip install httplib2==0.22.0 clang==21.1.7
+      - name: Apply Luminara Browser Overlay & Run Ninja Stage 8/16 (PGO + ThinLTO)
+        run: |
+          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          cd ungoogled-chromium-windows
+          python build.py --ci -j 4 
+      - name: Checkpoint Stage 8 Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminara-stage-8-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+          retention-days: 3
+  compile-stage-9:
+    needs: compile-stage-8
+    if: always() && needs.compile-stage-8.result == 'success' && fromJSON(inputs.stage_limit || '16') >= 9
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Checkpointed Build Tree (Stage 8)
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-8-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+      - name: Install V8 Metagen Clang Bindings & Forge Package
+        run: |
+          python -m pip install -e .
+          python -m pip install httplib2==0.22.0 clang==21.1.7
+      - name: Apply Luminara Browser Overlay & Run Ninja Stage 9/16 (PGO + ThinLTO)
+        run: |
+          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          cd ungoogled-chromium-windows
+          python build.py --ci -j 4 
+      - name: Checkpoint Stage 9 Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminara-stage-9-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+          retention-days: 3
+  compile-stage-10:
+    needs: compile-stage-9
+    if: always() && needs.compile-stage-9.result == 'success' && fromJSON(inputs.stage_limit || '16') >= 10
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Checkpointed Build Tree (Stage 9)
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-9-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+      - name: Install V8 Metagen Clang Bindings & Forge Package
+        run: |
+          python -m pip install -e .
+          python -m pip install httplib2==0.22.0 clang==21.1.7
+      - name: Apply Luminara Browser Overlay & Run Ninja Stage 10/16 (PGO + ThinLTO)
+        run: |
+          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          cd ungoogled-chromium-windows
+          python build.py --ci -j 4 
+      - name: Checkpoint Stage 10 Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminara-stage-10-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+          retention-days: 3
+  compile-stage-11:
+    needs: compile-stage-10
+    if: always() && needs.compile-stage-10.result == 'success' && fromJSON(inputs.stage_limit || '16') >= 11
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Checkpointed Build Tree (Stage 10)
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-10-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+      - name: Install V8 Metagen Clang Bindings & Forge Package
+        run: |
+          python -m pip install -e .
+          python -m pip install httplib2==0.22.0 clang==21.1.7
+      - name: Apply Luminara Browser Overlay & Run Ninja Stage 11/16 (PGO + ThinLTO)
+        run: |
+          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          cd ungoogled-chromium-windows
+          python build.py --ci -j 4 
+      - name: Checkpoint Stage 11 Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminara-stage-11-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+          retention-days: 3
+  compile-stage-12:
+    needs: compile-stage-11
+    if: always() && needs.compile-stage-11.result == 'success' && fromJSON(inputs.stage_limit || '16') >= 12
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Checkpointed Build Tree (Stage 11)
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-11-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+      - name: Install V8 Metagen Clang Bindings & Forge Package
+        run: |
+          python -m pip install -e .
+          python -m pip install httplib2==0.22.0 clang==21.1.7
+      - name: Apply Luminara Browser Overlay & Run Ninja Stage 12/16 (PGO + ThinLTO)
+        run: |
+          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          cd ungoogled-chromium-windows
+          python build.py --ci -j 4 
+      - name: Checkpoint Stage 12 Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminara-stage-12-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+          retention-days: 3
+  compile-stage-13:
+    needs: compile-stage-12
+    if: always() && needs.compile-stage-12.result == 'success' && fromJSON(inputs.stage_limit || '16') >= 13
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Checkpointed Build Tree (Stage 12)
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-12-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+      - name: Install V8 Metagen Clang Bindings & Forge Package
+        run: |
+          python -m pip install -e .
+          python -m pip install httplib2==0.22.0 clang==21.1.7
+      - name: Apply Luminara Browser Overlay & Run Ninja Stage 13/16 (PGO + ThinLTO)
+        run: |
+          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          cd ungoogled-chromium-windows
+          python build.py --ci -j 4 
+      - name: Checkpoint Stage 13 Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminara-stage-13-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+          retention-days: 3
+  compile-stage-14:
+    needs: compile-stage-13
+    if: always() && needs.compile-stage-13.result == 'success' && fromJSON(inputs.stage_limit || '16') >= 14
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Checkpointed Build Tree (Stage 13)
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-13-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+      - name: Install V8 Metagen Clang Bindings & Forge Package
+        run: |
+          python -m pip install -e .
+          python -m pip install httplib2==0.22.0 clang==21.1.7
+      - name: Apply Luminara Browser Overlay & Run Ninja Stage 14/16 (PGO + ThinLTO)
+        run: |
+          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          cd ungoogled-chromium-windows
+          python build.py --ci -j 4 
+      - name: Checkpoint Stage 14 Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminara-stage-14-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+          retention-days: 3
+  compile-stage-15:
+    needs: compile-stage-14
+    if: always() && needs.compile-stage-14.result == 'success' && fromJSON(inputs.stage_limit || '16') >= 15
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Checkpointed Build Tree (Stage 14)
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-14-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+      - name: Install V8 Metagen Clang Bindings & Forge Package
+        run: |
+          python -m pip install -e .
+          python -m pip install httplib2==0.22.0 clang==21.1.7
+      - name: Apply Luminara Browser Overlay & Run Ninja Stage 15/16 (PGO + ThinLTO)
+        run: |
+          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          cd ungoogled-chromium-windows
+          python build.py --ci -j 4 
+      - name: Checkpoint Stage 15 Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminara-stage-15-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+          retention-days: 3
+  compile-stage-16:
+    needs: compile-stage-15
+    if: always() && needs.compile-stage-15.result == 'success' && fromJSON(inputs.stage_limit || '16') >= 16
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Checkpointed Build Tree (Stage 15)
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-15-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+      - name: Install V8 Metagen Clang Bindings & Forge Package
+        run: |
+          python -m pip install -e .
+          python -m pip install httplib2==0.22.0 clang==21.1.7
+      - name: Apply Luminara Browser Overlay & Run Ninja Stage 16/16 (PGO + ThinLTO)
+        run: |
+          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          cd ungoogled-chromium-windows
+          python build.py --ci -j 4 
+      - name: Checkpoint Stage 16 Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminara-stage-16-${{ matrix.arch }}
+          path: ungoogled-chromium-windows/build/src/out/Default
+          retention-days: 3
+  package-signed-release:
+    needs: compile-stage-16
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore Final Stage 16 Build Tree
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-16-x64
+          path: ungoogled-chromium-windows/build/src/out/Default
+      - name: Package Portable ZIP + Mini Installer + SHA-256 Manifest
+        run: |
+          cd ungoogled-chromium-windows
+          python package.py

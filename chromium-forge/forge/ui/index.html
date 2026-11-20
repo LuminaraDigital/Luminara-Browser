@@ -294,7 +294,7 @@
       <span class="status-led"></span>
       <div>
         <div class="title">Luminara Browser Forge Cockpit</div>
-        <div class="kicker">REA Clean-Room Engine · Ungoogled 157 + Comet + BrowserPilot · MCP v2 :8796</div>
+        <div class="kicker">REA Clean-Room Engine · Ungoogled 157 · 20-Tool MCP v2 :8796</div>
       </div>
     </div>
     <div class="actions">
@@ -338,7 +338,7 @@
           </div>
 
           <div class="toggles">
-            <label class="toggle"><input type="checkbox" name="portable_mode" /> Portable Vault (--disable-encryption)</label>
+            <label class="toggle"><input type="checkbox" name="portable_mode" /> Portable Bundle Mode (DPAPI os_crypt Enabled)</label>
             <label class="toggle"><input type="checkbox" name="canvas_noise" /> Canvas Fingerprint Noise</label>
             <label class="toggle"><input type="checkbox" name="client_rects_noise" /> ClientRects Noise</label>
             <label class="toggle"><input type="checkbox" name="popups_to_tabs" /> Force Pop-ups to Tabs</label>
@@ -371,12 +371,13 @@
           <span class="kicker">03 / Live Compiled Patch &amp; GN Inspector</span>
           <span class="kicker">Zero-Fuzz Verified</span>
         </div>
-        <div class="tabs" id="artifactTabs">
-          <button class="tab-btn active" data-tab="search_patch" type="button">custom-search-engine.patch</button>
-          <button class="tab-btn" data-tab="branding_patch" type="button">custom-branding.patch</button>
-          <button class="tab-btn" data-tab="args_gn" type="button">args.gn (Sorted)</button>
-          <button class="tab-btn" data-tab="domain_regex" type="button">domain_regex.list</button>
-          <button class="tab-btn" data-tab="cloud_workflow" type="button">cloud-build-windows.yml</button>
+        <div class="tabs" id="artifactTabs" role="tablist" aria-label="Compiled Overlay Artifacts">
+          <button class="tab-btn active" role="tab" aria-selected="true" data-tab="search_patch" type="button">custom-search-engine.patch</button>
+          <button class="tab-btn" role="tab" aria-selected="false" data-tab="branding_patch" type="button">custom-branding.patch</button>
+          <button class="tab-btn" role="tab" aria-selected="false" data-tab="network_trap_patch" type="button">block-trk-and-subdomains.patch</button>
+          <button class="tab-btn" role="tab" aria-selected="false" data-tab="args_gn" type="button">args.gn (Sorted)</button>
+          <button class="tab-btn" role="tab" aria-selected="false" data-tab="domain_regex" type="button">domain_regex.list</button>
+          <button class="tab-btn" role="tab" aria-selected="false" data-tab="cloud_workflow" type="button">cloud-build-windows.yml</button>
         </div>
         <pre class="code-view" id="codeStage">Loading compiled overlay...</pre>
       </section>
@@ -404,25 +405,43 @@
       b.className = 'banner visible ' + kind;
     }
 
-    function renderDiffOrCode(text) {
-      const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-      return text.split('\n').map(line => {
+    function renderDiffOrCodeToNode(container, text) {
+      container.replaceChildren();
+      const lines = String(text || '').split('\n');
+      lines.forEach((line, idx) => {
         if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('@@')) {
-          return `<span class="diff-hdr">${esc(line)}</span>`;
+          const sp = document.createElement('span');
+          sp.className = 'diff-hdr';
+          sp.textContent = line;
+          container.appendChild(sp);
+        } else if (line.startsWith('+')) {
+          const sp = document.createElement('span');
+          sp.className = 'diff-add';
+          sp.textContent = line;
+          container.appendChild(sp);
+        } else if (line.startsWith('-')) {
+          const sp = document.createElement('span');
+          sp.className = 'diff-del';
+          sp.textContent = line;
+          container.appendChild(sp);
+        } else {
+          container.appendChild(document.createTextNode(line));
         }
-        if (line.startsWith('+')) return `<span class="diff-add">${esc(line)}</span>`;
-        if (line.startsWith('-')) return `<span class="diff-del">${esc(line)}</span>`;
-        return esc(line);
-      }).join('\n');
+        if (idx < lines.length - 1) {
+          container.appendChild(document.createTextNode('\n'));
+        }
+      });
     }
 
     function syncCodeView() {
       document.querySelectorAll('#artifactTabs .tab-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.tab === activeTab);
+        const active = btn.dataset.tab === activeTab;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-selected', String(active));
       });
       if (!currentState || !currentState.artifacts) return;
       const raw = currentState.artifacts[activeTab] || '';
-      document.getElementById('codeStage').innerHTML = renderDiffOrCode(raw);
+      renderDiffOrCodeToNode(document.getElementById('codeStage'), raw);
     }
 
     function renderObligations(report) {
@@ -438,6 +457,7 @@
         pill.className = obl.passed ? 'pill-pass' : 'pill-fail';
         pill.textContent = obl.obligation_id;
         const mid = document.createElement('div');
+        mid.style.cssText = 'min-width:0; overflow-wrap:anywhere;';
         const t = document.createElement('div');
         t.style.cssText = 'font-weight:600; font-size:12.5px;';
         t.textContent = obl.title;
@@ -520,6 +540,8 @@
         document.getElementById('portStateBadge').textContent = ps.built ? 'BUILT & READY' : 'READY TO EXTRACT';
         document.getElementById('distPathBox').textContent = 'Dist: ' + ps.dist_dir;
       } catch (err) {
+        const cs = document.getElementById('codeStage');
+        if (cs) cs.textContent = 'Error loading Studio state (' + err.message + '). Reload page or check python -m forge studio.';
         showBanner('Failed to load Studio state: ' + err.message, 'err');
       }
     }
@@ -532,67 +554,76 @@
       });
     });
 
-    document.getElementById('btnCompile').addEventListener('click', async e => {
+    document.getElementById('profileForm').addEventListener('input', () => {
+      document.getElementById('draftBadge').textContent = 'UNSAVED DRAFT';
+    });
+    document.querySelectorAll('#profileForm input[required]').forEach(inp => {
+      inp.addEventListener('blur', () => {
+        if (!inp.checkValidity()) {
+          showBanner(`Invalid ${inp.name}: ${inp.validationMessage}`, 'err');
+        }
+      });
+    });
+
+    async function runWithBusy(btn, busyLabel, fn) {
+      const orig = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = busyLabel;
+      try {
+        await fn();
+      } catch (err) {
+        showBanner(err.message, 'err');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    }
+
+    document.getElementById('btnCompile').addEventListener('click', e => {
       const form = document.getElementById('profileForm');
       if (!form.reportValidity()) return;
-      e.target.disabled = true;
-      try {
+      runWithBusy(e.currentTarget, 'Compiling...', async () => {
         const data = await postJson('/api/compile', readFormPayload());
         currentState.profile = data.profile;
         currentState.artifacts = data.artifacts;
+        document.getElementById('draftBadge').textContent = 'SYNCED';
         syncCodeView();
         showBanner('Compiled zero-fuzz patches, domain_regex.list, and sorted args.gn.', 'ok');
-      } catch (err) {
-        showBanner(err.message, 'err');
-      } finally {
-        e.target.disabled = false;
-      }
+      });
     });
 
-    document.getElementById('btnVerify').addEventListener('click', async e => {
-      e.target.disabled = true;
-      try {
+    document.getElementById('btnVerify').addEventListener('click', e => {
+      runWithBusy(e.currentTarget, 'Verifying 14/14...', async () => {
         const data = await postJson('/api/verify', {});
         renderObligations(data.rea_report);
-        showBanner(`REA Gate passed ${data.rea_report.passed_count}/${data.rea_report.total_count} obligations.`, 'ok');
-      } catch (err) {
-        showBanner(err.message, 'err');
-      } finally {
-        e.target.disabled = false;
-      }
+        const okTone = data.rea_report.all_obligations_passed ? 'ok' : 'err';
+        showBanner(`REA Gate verified ${data.rea_report.passed_count}/${data.rea_report.total_count} obligations.`, okTone);
+      });
     });
 
-    document.getElementById('btnPortable').addEventListener('click', async e => {
+    document.getElementById('btnPortable').addEventListener('click', e => {
       const form = document.getElementById('profileForm');
       if (!form.reportValidity()) return;
-      e.target.disabled = true;
       showBanner('Assembling customized portable Luminara Browser 157 Win64 bundle...', 'ok');
-      try {
+      runWithBusy(e.currentTarget, 'Building Portable...', async () => {
         await postJson('/api/compile', readFormPayload());
         const data = await postJson('/api/build-portable', {});
+        document.getElementById('draftBadge').textContent = 'SYNCED';
         document.getElementById('portStateBadge').textContent = 'BUILT & READY';
         document.getElementById('distPathBox').textContent = 'Dist: ' + data.result.dist_dir;
         showBanner('Portable browser built at ' + data.result.cmd_launcher, 'ok');
-      } catch (err) {
-        showBanner(err.message, 'err');
-      } finally {
-        e.target.disabled = false;
-      }
+      });
     });
 
-    document.getElementById('btnLaunch').addEventListener('click', async e => {
+    document.getElementById('btnLaunch').addEventListener('click', e => {
       const form = document.getElementById('profileForm');
       if (!form.reportValidity()) return;
-      e.target.disabled = true;
-      try {
+      runWithBusy(e.currentTarget, 'Launching...', async () => {
         await postJson('/api/compile', readFormPayload());
         const data = await postJson('/api/launch-browser', {});
+        document.getElementById('draftBadge').textContent = 'SYNCED';
         showBanner('Launched ' + data.launched, 'ok');
-      } catch (err) {
-        showBanner(err.message, 'err');
-      } finally {
-        e.target.disabled = false;
-      }
+      });
     });
 
     loadInitialState();

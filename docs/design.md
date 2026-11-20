@@ -4,7 +4,7 @@ Archetype: **Precision Dark UI × High-Density Telemetry Cockpit** (with full `l
 
 ```yaml
 name: Luminara Browser Design System
-version: "2.1.0"
+version: "3.0.0"
 archetype: precision-dark-telemetry-cockpit
 colors:
   bg_canvas: "light-dark(oklch(0.975 0.005 255), oklch(0.115 0.012 255))"

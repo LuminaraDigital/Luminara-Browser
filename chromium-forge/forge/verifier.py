@@ -59,6 +59,7 @@ def run_rea_verification_suite(
     profile: ForkProfile | None = None,
     *,
     write_report: bool = True,
+    static_only: bool = False,
 ) -> dict[str, object]:
     """Run all 14 REA Obligation checks (`OBL-01` .. `OBL-14`) and emit a structured Parity Report."""
     active_profile = profile or ForkProfile()
@@ -382,7 +383,8 @@ def run_rea_verification_suite(
         )
     )
 
-    results.extend(run_agentic_live_verification(forge_root, active_profile))
+    if not static_only:
+        results.extend(run_agentic_live_verification(forge_root, active_profile))
 
     report = {
         "target_chromium_version": chromium_ver,
@@ -396,7 +398,7 @@ def run_rea_verification_suite(
         "residual_unknowns": [
             {
                 "id": "RU-01",
-                "scope": "Excluded anti-bot / CAPTCHA / fingerprint-evasion modules from BrowserPilot",
+                "scope": "Excluded anti-bot / CAPTCHA / fingerprint-evasion modules by safety design",
                 "reason": "Strictly excluded (`anti_bot_detection.py`, `stealth_engine.py`, `fingerprint_profile.py`, `human_behavior.py`) per safety & access-control rules; replaced with `PAUSED_HUMAN_HANDOFF` co-browsing so the human completes login/MFA/verification directly in the shared browser tab.",
             },
             {
@@ -407,7 +409,7 @@ def run_rea_verification_suite(
         ],
     }
 
-    if write_report:
+    if write_report and not static_only:
         out_report = forge_root / "rea_verification_report.json"
         out_report.write_text(json.dumps(report, indent=2) + "\n", encoding=ENCODING, newline="\n")
     return report

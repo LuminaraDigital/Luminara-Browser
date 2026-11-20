@@ -1,0 +1,14 @@
+--- a/content/public/common/content_switches.h
++++ b/content/public/common/content_switches.h
+@@ -22,6 +22,11 @@
+ CONTENT_EXPORT extern const char kAllowLoopbackInPeerConnection[];
+ CONTENT_EXPORT extern const char kAllowCommandLinePlugins[];
+ CONTENT_EXPORT extern const char kAutoAcceptCameraAndMicrophoneCapture[];
++inline constexpr char kLuminaraDeterministicFarblingSeed[] =
++    "luminara-farbling-seed";
++inline constexpr char kLuminaraEnableWebMCP[] = "luminara-enable-webmcp";
++inline constexpr char kLuminaraMutationFirewall[] =
++    "luminara-mutation-firewall";
+ CONTENT_EXPORT extern const char kBrowserCrashTest[];
+ CONTENT_EXPORT extern const char kBrowserStartupDialog[];
+ CONTENT_EXPORT extern const char kBrowserSubprocessPath[];

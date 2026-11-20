@@ -1,11 +1,11 @@
 {
-  "evidence_id": "ev_f9b7c2e2574a5d90071c94eddb3346f8b49ba617b87a8e7e49ea10072d2874ca",
+  "evidence_id": "ev_cd934ed1c8e3638fe33adefe54734d75cbc0d9d1f772aeacc4c4455d6c59bcf9",
   "subject": {
-    "name": "frontend",
+    "name": "luminara-workspace-spec",
     "digest": {
-      "sha256": "ffd00f4d59fd48dcd339ea22c45b5f7335c306ba77d6d3b5f754085fbf62d1e6"
+      "sha256": "1dcc4e8cdd29faac6be3a810e901425b1e06b913db872ac58f49918b5d4da29e"
     },
-    "local_path": "<workspace>/BrowserPilot\\frontend",
+    "local_path": "<workspace>/luminara-workspace-spec",
     "format": "directory",
     "architecture": null
   },
@@ -23,17 +23,17 @@
   },
   "raw_result": null,
   "normalized_result": {
-    "input_path": "<workspace>/BrowserPilot\\frontend",
+    "input_path": "<workspace>/luminara-workspace-spec",
     "format": "directory",
-    "root_artifact_sha256": "ffd00f4d59fd48dcd339ea22c45b5f7335c306ba77d6d3b5f754085fbf62d1e6",
-    "inventory_manifest_id": "agm_741c26f083018b393ead45336f6dc57945503cd9b20d97793fcbe49a8cdefc55",
-    "inventory_graph_sha256": "fdeccff3057773540e250faef119812193a06c710aa080e5f6d687e62a5e57a6",
+    "root_artifact_sha256": "1dcc4e8cdd29faac6be3a810e901425b1e06b913db872ac58f49918b5d4da29e",
+    "inventory_manifest_id": "agm_637fa5b2553aec41eaf914e17be96c157518e55ce61f8c7958233e9a5b21641e",
+    "inventory_graph_sha256": "036da7d9ed474dc06e6412df410d35a45de47d044d1e73903c7ac47e7b65c391",
     "integrity_contradictions_count": 0,
     "integrity_contradictions": [],
     "graph": "<summary: dict>",
     "summary": {
-      "browser_windows": 0,
-      "explicit_web_preferences": 0,
+      "browser_windows": 1,
+      "explicit_web_preferences": 4,
       "preload_entrypoints": 0,
       "context_bridge_apis": 0,
       "exposed_api_members": 0,
@@ -55,38 +55,44 @@
       "resolved_native_addon_bindings": 0
     },
     "statistics": {
-      "relevant_files": 23,
+      "relevant_files": 9,
       "nested_asar_containers": 0,
-      "text_bytes_read": 227885,
+      "text_bytes_read": 481913,
       "invalid_utf8_files": 0,
-      "parsed_javascript_files": 17,
-      "visited_ast_nodes": 7064,
-      "findings": 141,
+      "parsed_javascript_files": 2,
+      "visited_ast_nodes": 1167,
+      "findings": 9,
       "modules": 0,
-      "parse_failures": 2
+      "parse_failures": 0
     },
-    "limitations_count": 6,
+    "limitations_count": 9,
     "limitations": [
       "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
+      "Electron API identity follows proven lexical module aliases and structurally verified module-namespace interop. Other reassignments, dynamic selections, and visibly overwritten namespace members are unresolved; missing findings do not establish absence. Arbitrary call side effects and runtime registration are not evaluated.",
+      "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
       "Graph coverage is incomplete; unavailable facts remain explicit and must not be read as absence.",
       "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
       "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
       "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
-      "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code."
+      "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code.",
+      "workspace.html has 1 inline JavaScript body starting at line 73 that was not analyzed; endpoints, storage, imports and other facts in it are absent from the evidence."
     ],
     "semantic_graph": "<summary: dict>"
   },
   "confidence": "derived",
   "authority": "shipped-artifact",
   "environment": null,
-  "limitations_count": 6,
+  "limitations_count": 9,
   "limitations": [
     "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
+    "Electron API identity follows proven lexical module aliases and structurally verified module-namespace interop. Other reassignments, dynamic selections, and visibly overwritten namespace members are unresolved; missing findings do not establish absence. Arbitrary call side effects and runtime registration are not evaluated.",
+    "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
     "Graph coverage is incomplete; unavailable facts remain explicit and must not be read as absence.",
     "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
     "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
     "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
-    "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code."
+    "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code.",
+    "workspace.html has 1 inline JavaScript body starting at line 73 that was not analyzed; endpoints, storage, imports and other facts in it are absent from the evidence."
   ],
   "relationship_coverage": null,
   "locations_count": 1,

@@ -210,14 +210,63 @@ def build_custom_domain_regex_list(upstream_lines: list[str], profile: ForkProfi
 
 
 def generate_github_actions_cloud_workflow(profile: ForkProfile) -> str:
-    """Generate a ready-to-push GitHub Actions Windows x64 cloud builder workflow."""
-    return f"""name: Build {profile.brand_name} (Windows {profile.target_cpu})
+    """Generate a full 16-stage checkpointed GitHub Actions Windows x64/arm64 PGO+ThinLTO cloud builder workflow."""
+    arch_flag = "--x86" if profile.target_cpu == "x86" else "--arm" if profile.target_cpu == "arm64" else ""
+    stages_yaml: list[str] = []
+    for stage in range(1, 17):
+        prev_job = "verify-custom-patches" if stage == 1 else f"compile-stage-{stage - 1}"
+        restore_block = (
+            ""
+            if stage == 1
+            else f"""      - name: Restore Checkpointed Build Tree (Stage {stage - 1})
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-{stage - 1}-${{{{ matrix.arch }}}}
+          path: ungoogled-chromium-windows/build/src/out/Default
+"""
+        )
+        stages_yaml.append(
+            f"""  compile-stage-{stage}:
+    needs: {prev_job}
+    if: always() && needs.{prev_job}.result == 'success' && fromJSON(inputs.stage_limit || '16') >= {stage}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [{profile.target_cpu}]
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+{restore_block}      - name: Install V8 Metagen Clang Bindings & Forge Package
+        run: |
+          python -m pip install -e .
+          python -m pip install httplib2==0.22.0 clang==21.1.7
+      - name: Apply {profile.brand_name} Overlay & Run Ninja Stage {stage}/16 (PGO + ThinLTO)
+        run: |
+          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          cd ungoogled-chromium-windows
+          python build.py --ci -j 4 {arch_flag}
+      - name: Checkpoint Stage {stage} Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: luminara-stage-{stage}-${{{{ matrix.arch }}}}
+          path: ungoogled-chromium-windows/build/src/out/Default
+          retention-days: 3
+"""
+        )
+
+    return f"""name: Build {profile.brand_name} 16-Stage Cloud Compiler (Windows {profile.target_cpu})
 
 on:
   workflow_dispatch:
     inputs:
       stage_limit:
-        description: 'Max 3.5h compilation stages'
+        description: 'Max 3.5h compilation stages (1..16)'
         required: false
         default: '16'
 
@@ -231,13 +280,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Run Chromium Forge REA Pre-Flight Gate
-        run: python -m forge verify-rea
+      - name: Run Chromium Forge REA + Upstream Patch Pre-Flight Gate
+        shell: bash
+        run: |
+          cd chromium-forge
+          python -W error -m unittest discover -s tests -v
+          python -m forge verify-upstream-patches
+          python -m forge verify-rea --static-only
 
-  # Mirrors ungoogled-chromium-windows 16-stage checkpointed Ninja pipeline
-  # Each stage compiles for up to 3.5h (exit code 124 checkpoints build/src into Actions Artifacts)
-  compile-stage-1:
-    needs: verify-custom-patches
+  # 16-stage checkpointed Ninja + ThinLTO + PGO pipeline (exit 124 checkpoints cleanly across 3.5h windows)
+{"".join(stages_yaml)}  package-signed-release:
+    needs: compile-stage-16
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -246,13 +299,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install V8 Metagen Clang Bindings
-        run: python -m pip install httplib2==0.22.0 clang==21.1.7
-      - name: Apply {profile.brand_name} Overlay & StartCheckpointed Build
+      - name: Restore Final Stage 16 Build Tree
+        uses: actions/download-artifact@v4
+        with:
+          name: luminara-stage-16-{profile.target_cpu}
+          path: ungoogled-chromium-windows/build/src/out/Default
+      - name: Package Portable ZIP + Mini Installer + SHA-256 Manifest
         run: |
-          python -m forge export-windows-overlay --profile fork.json --windows-repo ./ungoogled-chromium-windows
           cd ungoogled-chromium-windows
-          python build.py --ci -j 2 {"--x86" if profile.target_cpu == "x86" else "--arm" if profile.target_cpu == "arm64" else ""}
+          python package.py
 """
 
 

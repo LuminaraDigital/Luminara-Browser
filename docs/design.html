@@ -4,13 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark light" />
-  <title>Luminara Browser — Design System v2.1</title>
+  <title>Luminara Browser — Design System v3.0.0</title>
   <style>
     :root {
       color-scheme: dark light;
       --bg-0: light-dark(oklch(0.975 0.005 255), oklch(0.115 0.012 255));
       --bg-1: light-dark(oklch(0.95 0.007 255), oklch(0.15 0.013 255));
       --bg-2: light-dark(oklch(0.915 0.009 255), oklch(0.188 0.015 255));
+      --bg-topbar: light-dark(oklch(0.965 0.006 255 / 0.88), oklch(0.12 0.012 255 / 0.86));
       --ink-0: light-dark(oklch(0.15 0.015 255), oklch(0.965 0.005 255));
       --ink-1: light-dark(oklch(0.34 0.015 255), oklch(0.78 0.012 255));
       --ink-2: light-dark(oklch(0.44 0.015 255), oklch(0.67 0.012 255));
@@ -43,6 +44,9 @@
       background: color-mix(in oklch, var(--accent) 16%, transparent); color: var(--ink-0);
       font: 600 12px var(--font-mono); cursor: pointer; width: fit-content;
     }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+    }
   </style>
 </head>
 <body>
@@ -50,7 +54,7 @@
     <header>
       <div class="kicker">SYNCHRONIZED DESIGN SYSTEM · WCAG 2.2 AA · OKLCH LIGHT-DARK()</div>
       <h1>Luminara Browser Visual Token Reference</h1>
-      <p class="mono" style="margin-top:6px;">Mirrored live specification for <code>docs/design.md</code> (v2.1.0)</p>
+      <p class="mono" style="margin-top:6px;">Mirrored live specification for <code>docs/design.md</code> (v3.0.0)</p>
     </header>
     <section class="grid" aria-label="Color Tokens">
       <article class="card"><div class="swatch" style="background:var(--bg-0)"></div><strong>bg_canvas</strong><span class="mono">--bg-0</span></article>

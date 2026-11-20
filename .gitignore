@@ -4,6 +4,7 @@
 chromium-forge/dist/
 chromium-forge/cache/
 chromium-forge/outputs/
+vendor/
 ungoogled-chromium/build/
 ungoogled-chromium-windows/build/
 ungoogled-chromium-windows/ungoogled-chromium/
@@ -39,9 +40,16 @@ node_modules/
 .wrangler/
 .dev.vars
 
-# Secrets & OS metadata
+# Secrets, encrypted vaults, ledgers & OS metadata
 .env
 .env.*
 !.env.example
+**/vault.json
+**/vault.key.json
+**/local_ui_key.txt
+**/action_ledger.jsonl
+**/active_handoffs.json
+**/knowledge_graph.sqlite3*
+**/*.sqlite3*
 .DS_Store
 Thumbs.db

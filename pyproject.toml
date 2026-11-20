@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "luminara-browser-forge"
-version = "2.1.0"
-description = "Zero-dependency Ungoogled-Chromium 157 customization forge, Dual Human+AI CDP Co-Browsing Daemon, BulkEngine, Generative UI Workspace, and MCP v2 server."
+version = "3.0.0"
+description = "Zero-dependency Chromium/Ungoogled-Chromium 100x Forge, Multiplexed CDP + AXTree + W3C WebMCP Daemon, DPAPI/AEAD Vault, Network Mutation Firewall, FTS5 Knowledge Workspaces, Privacy Shield v3, and 20-Tool MCP v2 Server."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
