@@ -210,25 +210,25 @@ def audit_patch_directory(patches_dir: Path) -> PatchAuditReport:
 
 
 def find_patch_binary(explicit_path: Path | None = None) -> str | None:
-    """Locate GNU `patch` via explicit path, `PATCH_BIN` env, PATH, or Git for Windows."""
+    """Locate modern GNU `patch` (preferring Git for Windows `usr/bin/patch.exe` over broken Strawberry Perl `patch.exe` 2.5.9)."""
     if explicit_path is not None and explicit_path.exists():
         return str(explicit_path)
     env_bin = os.environ.get("PATCH_BIN")
     if env_bin and (Path(env_bin).exists() or shutil.which(env_bin)):
         return env_bin
-    on_path = shutil.which("patch")
-    if on_path:
-        return on_path
-    git_bin = shutil.which("git")
-    if git_bin:
-        git_root = Path(git_bin).resolve().parent.parent
-        candidate = git_root / "usr" / "bin" / ("patch.exe" if os.name == "nt" else "patch")
-        if candidate.exists():
-            return str(candidate)
     if os.name == "nt":
+        git_bin = shutil.which("git")
+        if git_bin:
+            git_root = Path(git_bin).resolve().parent.parent
+            candidate = git_root / "usr" / "bin" / "patch.exe"
+            if candidate.exists():
+                return str(candidate)
         win_git_patch = Path(r"C:\Program Files\Git\usr\bin\patch.exe")
         if win_git_patch.exists():
             return str(win_git_patch)
+    on_path = shutil.which("patch")
+    if on_path and "strawberry" not in on_path.lower():
+        return on_path
     return None
 
 
