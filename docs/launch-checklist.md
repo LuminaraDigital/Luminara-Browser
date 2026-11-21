@@ -1,6 +1,6 @@
 # Luminara Browser — Production Launch Checklist
 
-**Product:** Luminara Browser (`v3.0.0`) — Privacy-hardened Ungoogled-Chromium 157 Windows desktop browser + Local 20-Tool MCP v2 Agent Daemon (`chromium-forge/`) + Cloudflare Edge Portal (`cloudflare/`) + Reusable AI Agent Skill (`skills/luminara-browser/`).  
+**Product:** Luminara Browser (`v3.1.0`) — Privacy-hardened Ungoogled-Chromium 157 Windows desktop browser + Local 28-Tool / 9-Resource MCP v2 Agent Daemon (`chromium-forge/`) + Cloudflare Edge Portal (`cloudflare/`) + Reusable AI Agent Skill (`skills/luminara-browser/`).  
 **Estimated Total Time:** ~35 minutes  
 **Estimated Monthly Cost:** **$0/month** (GitHub Free + Cloudflare Workers Free tier; optional custom domain ~$10/year).
 
@@ -13,10 +13,10 @@
 
 ## Phase 1: Pre-Push Binary, Security & Test Gate (3 min)
 
-- [x] 🤖 **Step 1.1 — Run full Zero-Warning Unit, Live Chromium E2E, Upstream C++ Patch (`4/4`), 100x Engine (`6/6`), REA (`14/14`), & A/B (`4/4`) Gate (2 min)**
-  Verifies that zero large binary archives (`.zip`/`.exe`/`.dll`, which GitHub rejects over 100 MB) or encrypted vault files are tracked by Git, and that all security, PowerShell syntax, 100x engine, and A/B benchmarks pass.
-  > `"Run python -W error -m unittest discover -s tests -v, python -m forge verify-upstream-patches, python -m forge verify-rea, python -m forge benchmark, and python -m forge benchmark-100x inside chromium-forge, and verify git status excludes dist/, cache/, vendor/, and outputs/."`
-  **You'll know it worked when:** All unit & live Chromium E2E tests print `OK`, `AB-01..AB-04` and `BM-01..BM-06` report `PASS`, and `git status` lists zero `.exe` or `.zip` files.
+- [x] 🤖 **Step 1.1 — Run full Zero-Warning Arch Ratchet, Unit, Live Chromium E2E, Upstream C++ Patch (`4/4`), 100x Engine (`6/6`), REA (`21/21`), & A/B (`8/8`) Gate (2 min)**
+  Verifies that zero large binary archives (`.zip`/`.exe`/`.dll`, which GitHub rejects over 100 MB) or encrypted vault files are tracked by Git, and that all architecture ratchet, security, PowerShell syntax, 100x engine, and A/B benchmarks pass.
+  > `"Run python -m forge verify-arch, python -W error -m unittest discover -s tests -v, python -m forge verify-upstream-patches, python -m forge verify-rea, python -m forge benchmark, and python -m forge benchmark-100x inside chromium-forge, and verify git status excludes dist/, cache/, _rea_targets/, vendor/, and outputs/."`
+  **You'll know it worked when:** All unit & live Chromium E2E tests print `OK`, `AB-01..AB-08` and `BM-01..BM-06` report `PASS`, and `git status` lists zero `.exe` or `.zip` files.
 
 ---
 
@@ -26,9 +26,9 @@
   Go to `https://github.com/new`, name the repository `luminara-browser`, choose **Public** (free unlimited GitHub Actions minutes for open-source repos) or **Private**, leave *"Add a README"* unchecked (we already have one), and click **Create repository**.
   **You'll know it worked when:** GitHub shows an empty repository page with a `https://github.com/<your-org>/luminara-browser.git` URL.
 
-- [ ] 🤝 **Step 2.2 — Push `main` branch and tag `v3.0.0` to build the downloadable Windows zip (7 min)**
-  A **Git tag** (a version marker like `v3.0.0`) automatically triggers `.github/workflows/release-windows.yml`, which assembles `Luminara-Browser-win64-portable.zip` and its **SHA-256 checksum** (a cryptographic fingerprint proving the download wasn't tampered with) on GitHub's cloud servers.
-  > `"Connect my GitHub remote https://github.com/<your-org>/luminara-browser.git, push main, and push tag v3.0.0."`
+- [ ] 🤝 **Step 2.2 — Push `main` branch and tag `v3.1.0` to build the downloadable Windows zip (7 min)**
+  A **Git tag** (a version marker like `v3.1.0`) automatically triggers `.github/workflows/release-windows.yml`, which assembles `Luminara-Browser-win64-portable.zip` and its **SHA-256 checksum** (a cryptographic fingerprint proving the download wasn't tampered with) on GitHub's cloud servers.
+  > `"Connect my GitHub remote https://github.com/<your-org>/luminara-browser.git, push main, and push tag v3.1.0."`
   **You'll know it worked when:** The **Actions** tab on GitHub turns green on both `Luminara Browser CI & Security Gate` and `Build & Publish Portable Windows x64 Release`, and `Releases` lists `Luminara-Browser-win64-portable.zip` + `SHA256SUMS.txt`.
 
 ---

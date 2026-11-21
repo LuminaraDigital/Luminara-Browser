@@ -1,7 +1,7 @@
 # Luminara Browser — Production Roadmap (`/loop` Review-Gated)
 
-**Status:** 21/21 tasks complete (`v2.x` 10/10 + `v3.0.0` 100x Track 7/7 + Deep Re-Audit Loop 4/4)  
-**Current Phase:** Officially Production & Deployment Ready (`v3.0.0` — `SHIP` Signed Off)
+**Status:** 38/38 tasks complete (`v2.x` 10/10 + `v3.0.0` 100x Track 7/7 + Deep Re-Audit Loop 10/10 + `v3.1.0` Perplexity REA Suite 7/7 + `v3.1.0` Production Hardening Loop 4/4)  
+**Current Phase:** `v3.1.0` Production & Deployment Ready (All 21/21 REA Gates, Wheel, Portable & Cloudflare Green)
 
 Every task must complete **1. Build → 2. Review (Code, Security, Design Tokens) → 3. Test End-to-End (empty/loading/error/success + automated suite) → 4. Fix** before marking `- [x]`.
 
@@ -40,3 +40,30 @@ Every task must complete **1. Build → 2. Review (Code, Security, Design Tokens
 - [x] **TASK-012**: Agent Daemon Thermo-Nuclear Compaction, Strict Non-Null Input Validation, 100x `TabLease`/Human-Approval Guards, Live-Tab Playbook URL Resolution & Robust LLM JSON Parsing.
 - [x] **TASK-013**: Forge Studio Crash Fix, MV3 `Alt+K` Background Opener, `#lum_token` Passport Auth, Interactive Vault/Playbooks UI, Full Copilot Side Panel Controls & Zero-Competitor Clean-Room Scrub.
 - [x] **TASK-014**: CLI Parity (`workspaces --action index/search`), Cross-OS GitHub CI/Release Hardening, Cloudflare Dynamic Repo Sync, Dual-Root Skill Promotion & Final Independent Sign-Off.
+- [x] **TASK-015**: Adversarial Core Engine Pass — Public `0x`/`01` Domain Fix, Non-Extension Tab Targeting, `contenteditable`/`<select>`/Visible-Gate DOM Fixes, `otpauth://` + Shadow-DOM Vault, f-String OOM Guard, Playbook/Goal Hardening & Valid-JSON Unicode FTS5.
+- [x] **TASK-016**: Adversarial Packaging, MV3 & Out-of-Repo Skill Pass — Non-Editable `pip install .` Support, `sign-manifest` CLI, DNR Domain Sanitizer, `Alt+K` Keystroke Isolation, `~/.luminara-browser` Key Mirror, Test Socket Cleanup & Final Sign-Off.
+- [x] **TASK-017**: WHATWG `GURL` SSRF Parity, Scoped RFC 8259 HTTP, `LuminaraRedactor`/`LuminaraVault` Precision & Runtime `sys.settrace` AST Sandbox Guard.
+- [x] **TASK-018**: Multiplexed CDP Detach/Crash Cleanup, Perception/WebMCP Schema Validation, CJK/Workspace Integrity & Thermo-Nuclear Server Decomposition (`mcp_specs.py`).
+- [x] **TASK-019**: Thermo-Nuclear UI Decomposition (`luminara_copilot_ext.py`), Human Vault `+ Add Credential` & Mutation Firewall `Approve`/`Reject` UI, Active-Tab Copilot & WCAG 2.2 AA `5.05:1` Craft.
+- [x] **TASK-020**: Release ZIP Secret Scrubbing (`--release`), `Quote-WinArg`/`-LiteralPath` Launcher, Pinned Chromium SHA-256, PEP 639 Non-Editable Wheel, 3-Root Skill Sync & Final CEO Sign-Off.
+
+---
+
+## Tasks (v3.1.0 — Perplexity AI REA Reverse-Engineering & Clean-Room Suite)
+
+- [x] **TASK-201**: REA v6.5.0 Antigravity MCP Registration (`mcp_config.json`), Gitignored `_rea_targets/perplexity/` Staging & Deterministic Evidence Harvester (`forge/rea_harvester.py`, `chromium-forge/rea_perplexity_evidence.json`).
+- [x] **TASK-202**: Clean-Room `SPACE` + `codescythe` Architecture Pattern Ratchet (`forge/arch_ratchet.py` — `<1,000` line ceiling, `dependencies=[]`, L10→L50 layer guard, two-set dead-code reachability) & Monotonic `lease_epoch` Fencing (`forge/knowledge_graph.py`).
+- [x] **TASK-203**: Clean-Room `numbat` Partitioned Behavioral Sequence Correlator, `PAUSED_SEQUENCE_BLOCK` Runtime Guard & `LUM-SIG-V2` Signed `CASE-*.zip` Forensic Casebundle Builder/Verifier (`forge/sequence_guard.py`).
+- [x] **TASK-204**: Clean-Room `rules_web_e2e` Hermetic `Fetch.enable` Declared-Origin Network Lock & Pure-Stdlib RFC 2083 PNG Scanline Pixel-Diff Visual Regression Engine (`forge/vrt_isolation.py`).
+- [x] **TASK-205**: Clean-Room `perplexity-py` + `search_evals` + `pplx-kernels` Fenced Web Monitors, CAS `expected_revision` Playbook Revisions, Exact `Decimal` `CostLedger` Search Eval Harness (`forge/monitors_eval.py`) & MoE All-to-All NVSHMEM Topology Auditor (`forge/kernel_spec_audit.py`).
+- [x] **TASK-206**: Full-Stack `v3.1.0` Surface Integration — 28-Tool / 9-Resource MCP v2 (`forge/agent_tools_v31.py`, `forge/mcp_specs.py`, `forge/agent_server.py`), Zero-XSS `/workspace` Telemetry Cockpit (`forge/luminara_telemetry_ui.py`), Secret-Safe `luminara_ctl.py` CLI & Cloudflare Edge Worker (`cloudflare/src/worker.js`).
+- [x] **TASK-207**: REA Stage 7 Verification (`OBL-15`..`OBL-21` in `forge/verifier_perplexity.py`), Zero-Warning Full-Stack Regression Suite (`tests/test_perplexity_rea_v31.py`) & Synchronized Architecture Docs.
+
+---
+
+## Tasks (v3.1.0 — Principal Multi-Agent Production Hardening & Release Loop)
+
+- [x] **TASK-301**: Core CDP Mux `Fetch` Hook Coordinator (`cdp_mux.py`, `cdp_client.py`), VRT + Mutation Firewall Cooperative Interception (`vrt_isolation.py`, `mutation_firewall.py`), Persistent Anti-Spoof `SequenceGuard` Latch (`sequence_guard.py`), AST `.replace`/`.join` & Lease-Safe Playbook Replay (`luminara_automation.py`), and Unified Human-UI-Key Auth (`agent_tools_v31.py`, `agent_server.py`).
+- [x] **TASK-302**: Real `rea-agents@6.5.0` 12-Evidence Ledger across 7/7 Perplexity Targets (`rea_harvester.py`, `forge/rea_evidence/*.json`), Release-Scrubbed Copilot `ui_key=""` (`luminara_copilot_ext.py`), Decomposed Honest Search Eval & SSRF-Pinned Monitors (`monitors_eval.py`, `search_eval_runner.py`), and Out-of-Repo Wheel `arch_ratchet` (`0` unreferenced exports).
+- [x] **TASK-303**: Full `/workspace` Telemetry Cockpit Controls (Monitor Run/Delete/Diff, CAS Rollback, Signed `.zip` Casebundle Download/Verify, VRT Baseline/Compare/Lock, Honest `SKIPPED (No API Key)` Scorecard), WCAG 2.2 AA `3.1:1` Control Borders, Focus Trap/Roving Tablist, and MV3 `3.1.0` Parity.
+- [x] **TASK-304**: Complete 28-Tool `luminara_ctl.py` CLI (`outline`, `wait`, `screenshot`, `schedule`, `--human-auth`, `valid: false` exit `1`), 4-Root Main Skill Byte-Identical Sync, Hardened GitHub CI/Release Workflows, Expanded Regression Suite (`tests/test_perplexity_rea_v31.py`), and Independent CEO Release Gate Sign-Off.

@@ -4,7 +4,7 @@ Archetype: **Precision Dark UI × High-Density Telemetry Cockpit** (with full `l
 
 ```yaml
 name: Luminara Browser Design System
-version: "3.0.0"
+version: "3.1.0"
 archetype: precision-dark-telemetry-cockpit
 colors:
   bg_canvas: "light-dark(oklch(0.975 0.005 255), oklch(0.115 0.012 255))"
@@ -14,10 +14,11 @@ colors:
   ink_primary: "light-dark(oklch(0.15 0.015 255), oklch(0.965 0.005 255))"
   ink_secondary: "light-dark(oklch(0.34 0.015 255), oklch(0.78 0.012 255))"
   ink_muted: "light-dark(oklch(0.44 0.015 255), oklch(0.67 0.012 255))"
-  accent_emerald: "light-dark(oklch(0.48 0.15 162), oklch(0.75 0.16 162))"
-  status_amber: "light-dark(oklch(0.52 0.15 72), oklch(0.79 0.15 78))"
+  accent_emerald: "light-dark(oklch(0.45 0.15 162), oklch(0.75 0.16 162))"
+  status_amber: "light-dark(oklch(0.48 0.14 72), oklch(0.79 0.15 78))"
   status_danger: "light-dark(oklch(0.50 0.19 26), oklch(0.68 0.18 25))"
   hairline: "light-dark(oklch(0.15 0.01 255 / 0.12), oklch(1 0 0 / 0.09))"
+  border_control: "light-dark(oklch(0.15 0.01 255 / 0.34), oklch(1 0 0 / 0.28))"
 typography:
   font_sans: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
   font_mono: "'JetBrains Mono', 'Cascadia Code', Consolas, monospace"

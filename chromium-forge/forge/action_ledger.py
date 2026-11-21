@@ -147,43 +147,42 @@ class ActionLedger:
         return parsed
 
     def verify_ledger(self) -> dict[str, Any]:
-        """Recompute every SHA-256 receipt, chain link, and HMAC signature from genesis."""
+        """Recompute every SHA-256 receipt, chain link, and HMAC signature from genesis (streaming)."""
         if not self.ledger_path.exists():
             return {"valid": True, "checked_count": 0, "errors": []}
-        with self._lock:
-            lines = self.ledger_path.read_text(encoding=ENCODING).splitlines()
 
         expected_prev = GENESIS_PREV_HASH
         errors: list[str] = []
         checked = 0
-        for line_no, raw in enumerate(lines, start=1):
-            if not raw.strip():
-                continue
-            checked += 1
-            try:
-                rec = json.loads(raw)
-            except json.JSONDecodeError as exc:
-                errors.append(f"Line {line_no}: malformed JSON ({exc})")
-                break
-            if rec.get("prev_sha256") != expected_prev:
-                errors.append(f"Line {line_no} ({rec.get('receipt_id')}): prev_sha256 chain break")
-            recomputed = self._compute_digest(
-                ts_ms=int(rec.get("timestamp_ms", 0)),
-                prev_sha256=str(rec.get("prev_sha256", "")),
-                agent_id=str(rec.get("agent_id", "")),
-                action=str(rec.get("action", "")),
-                target_id=str(rec.get("target_id", "")),
-                params=rec.get("params") if isinstance(rec.get("params"), dict) else {},
-                status=str(rec.get("status", "")),
-                summary=str(rec.get("summary", "")),
-            )
-            expected_id = f"LUM-{rec.get('timestamp_ms')}-{recomputed[:10].upper()}"
-            if rec.get("sha256") != recomputed or rec.get("receipt_id") != expected_id:
-                errors.append(f"Line {line_no} ({rec.get('receipt_id')}): SHA-256 digest mismatch")
-            sig = rec.get("signature")
-            if self.signer is not None:
-                if not isinstance(sig, str) or not self.signer.verify_receipt_signature(recomputed, sig):
-                    errors.append(f"Line {line_no} ({rec.get('receipt_id')}): missing or invalid cryptographic signature")
-            expected_prev = str(rec.get("sha256", ""))
+        with self._lock, self.ledger_path.open("r", encoding=ENCODING) as fh:
+            for line_no, raw in enumerate(fh, start=1):
+                if not raw.strip():
+                    continue
+                checked += 1
+                try:
+                    rec = json.loads(raw)
+                except json.JSONDecodeError as exc:
+                    errors.append(f"Line {line_no}: malformed JSON ({exc})")
+                    break
+                if rec.get("prev_sha256") != expected_prev:
+                    errors.append(f"Line {line_no} ({rec.get('receipt_id')}): prev_sha256 chain break")
+                recomputed = self._compute_digest(
+                    ts_ms=int(rec.get("timestamp_ms", 0)),
+                    prev_sha256=str(rec.get("prev_sha256", "")),
+                    agent_id=str(rec.get("agent_id", "")),
+                    action=str(rec.get("action", "")),
+                    target_id=str(rec.get("target_id", "")),
+                    params=rec.get("params") if isinstance(rec.get("params"), dict) else {},
+                    status=str(rec.get("status", "")),
+                    summary=str(rec.get("summary", "")),
+                )
+                expected_id = f"LUM-{rec.get('timestamp_ms')}-{recomputed[:10].upper()}"
+                if rec.get("sha256") != recomputed or rec.get("receipt_id") != expected_id:
+                    errors.append(f"Line {line_no} ({rec.get('receipt_id')}): SHA-256 digest mismatch")
+                sig = rec.get("signature")
+                if self.signer is not None:
+                    if not isinstance(sig, str) or not self.signer.verify_receipt_signature(recomputed, sig):
+                        errors.append(f"Line {line_no} ({rec.get('receipt_id')}): missing or invalid cryptographic signature")
+                expected_prev = str(rec.get("sha256", ""))
 
         return {"valid": len(errors) == 0, "checked_count": checked, "head_sha256": expected_prev, "errors": errors}

@@ -225,6 +225,7 @@ class TestProductionHardeningAndAB(unittest.TestCase):
                 with urllib.request.urlopen(notif_req, timeout=5) as r_notif:
                     self.assertEqual(r_notif.status, 204)
             finally:
+                rt.close()
                 ag_srv.shutdown()
                 ag_srv.server_close()
                 st_srv.shutdown()
@@ -403,6 +404,7 @@ class TestProductionHardeningAndAB(unittest.TestCase):
                     r = subprocess.run([sys.executable, ctl, *subcmd], env=env, capture_output=True, text=True, timeout=15)
                     self.assertEqual(r.returncode, 0, f"CLI {subcmd} failed: {r.stderr} {r.stdout}")
             finally:
+                rt.close()
                 srv.shutdown()
                 srv.server_close()
                 terminate_browser_process(proc)

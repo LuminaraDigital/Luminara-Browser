@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark light" />
   <meta name="description" content="Luminara Browser — Privacy-hardened Ungoogled-Chromium 157 built for simultaneous Human + AI Agent co-browsing over Loopback CDP and MCP v2." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <title>Luminara Browser — Simultaneous Human + AI Co-Browsing</title>
   <style>
     :root {
@@ -15,8 +16,9 @@
       --ink-0: light-dark(oklch(0.15 0.015 255), oklch(0.965 0.005 255));
       --ink-1: light-dark(oklch(0.34 0.015 255), oklch(0.78 0.012 255));
       --ink-2: light-dark(oklch(0.44 0.015 255), oklch(0.67 0.012 255));
-      --accent: light-dark(oklch(0.48 0.15 162), oklch(0.75 0.16 162));
+      --accent: light-dark(oklch(0.45 0.15 162), oklch(0.75 0.16 162));
       --hairline: light-dark(oklch(0.15 0.01 255 / 0.12), oklch(1 0 0 / 0.09));
+      --border-control: light-dark(oklch(0.15 0.01 255 / 0.34), oklch(1 0 0 / 0.28));
       --specular: inset 0 1px 0 0 oklch(1 0 0 / 0.1);
       --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
@@ -34,7 +36,7 @@
       padding: clamp(1rem, 3vw, 2.5rem);
       -webkit-font-smoothing: antialiased;
     }
-    header, main, footer { max-width: 1220px; width: 100%; margin: 0 auto; }
+    header, main, footer { max-width: 1220px; width: 100%; margin: 0 auto; min-width: 0; }
     header, footer {
       display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;
       font-family: var(--font-mono); font-size: 12px; color: var(--ink-2);
@@ -49,7 +51,7 @@
     .cta-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
     .btn {
       min-height: 40px; padding: 9px 16px; border-radius: 10px;
-      border: 1px solid var(--hairline); background: var(--bg-1); color: var(--ink-0);
+      border: 1px solid var(--border-control); background: var(--bg-1); color: var(--ink-0);
       font: 600 12px var(--font-mono); text-decoration: none; cursor: pointer;
       display: inline-flex; align-items: center; gap: 8px;
     }
@@ -57,7 +59,7 @@
       border-color: var(--accent);
       background: color-mix(in oklch, var(--accent) 18%, transparent);
     }
-    .bento { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; }
+    .bento { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; min-width: 0; }
     .card {
       background: var(--bg-1); border: 1px solid var(--hairline); box-shadow: var(--specular);
       border-radius: 16px; padding: 18px; display: grid; gap: 12px; min-width: 0; align-content: start;
@@ -85,7 +87,7 @@
 </head>
 <body>
   <header>
-    <span>● LUMINARA BROWSER v3.0.0 · UNGOOGLED-CHROMIUM 157.0.8103.78</span>
+    <span>● LUMINARA BROWSER v3.1.0 · UNGOOGLED-CHROMIUM 157.0.8103.78</span>
     <nav style="display:flex;gap:12px;flex-wrap:wrap;">
       <a href="/llms.txt" style="color:inherit;">/llms.txt</a>
       <a href="/.well-known/agent.json" style="color:inherit;">/.well-known/agent.json</a>
@@ -96,7 +98,7 @@
 
   <main>
     <section style="display:grid;gap:14px;min-width:0;">
-      <div class="kicker">ZERO GOOGLE TELEMETRY · MULTIPLEXED CDP :9229 · 20-TOOL MCP v2 :8796</div>
+      <div class="kicker">ZERO GOOGLE TELEMETRY · MULTIPLEXED CDP :9229 · 28-TOOL MCP v2 :8796</div>
       <h1>One live browser window. Humans and AI agents simultaneously.</h1>
       <p class="lede">
         Luminara Browser fuses 134 Ungoogled-Chromium privacy patches with Set-of-Marks &amp; AXTree perception,
@@ -112,12 +114,12 @@
 
     <div class="bento">
       <section class="card span-7">
-        <div class="kicker">VERIFIED PRODUCTION TELEMETRY (14/14 REA · 8/8 A/B · 6/6 100x SUITE)</div>
+        <div class="kicker">VERIFIED PRODUCTION TELEMETRY (21/21 REA · 8/8 A/B · 6/6 100x SUITE)</div>
         <div class="metrics">
           <div class="metric-box"><div class="metric-val">-96.8%</div><div class="metric-lbl">Prompt Tokens</div></div>
           <div class="metric-box"><div class="metric-val">9.94×</div><div class="metric-lbl">Mux CDP Speedup</div></div>
           <div class="metric-box"><div class="metric-val">0 req</div><div class="metric-lbl">Google Calls</div></div>
-          <div class="metric-box"><div class="metric-val">20</div><div class="metric-lbl">MCP v2 Tools</div></div>
+          <div class="metric-box"><div class="metric-val">28</div><div class="metric-lbl">MCP v2 Tools</div></div>
         </div>
 
         <label for="pageSlider" class="mono" style="margin-top:4px;">
@@ -136,7 +138,7 @@
     }
   }
 }</pre>
-        <div class="mono" id="copyStatus" role="status" aria-live="polite">Compatible with any standard MCP v2 (`2025-06-18`) client. Login &amp; 2FA walls pause cleanly via <code>PAUSED_HUMAN_HANDOFF</code>.</div>
+        <div class="mono" id="copyStatus" role="status" aria-live="polite">Compatible with any standard MCP v2 (<code>2025-06-18</code>) client. Login &amp; 2FA walls pause cleanly via <code>PAUSED_HUMAN_HANDOFF</code>.</div>
         <div class="mono" id="edgeHealthBadge" role="status" aria-live="polite" style="margin-top:6px;">Checking edge telemetry...</div>
       </section>
     </div>

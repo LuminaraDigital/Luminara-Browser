@@ -66,10 +66,15 @@ def run_agentic_live_verification(forge_root: Path, active_profile: ForkProfile)
     """Verify OBL-08 .. OBL-14 against real REA AST evidence + live headless Chromium 157 CDP + MCP v2."""
     out: list[ObligationResult] = []
 
+    pkg_ev_dir = Path(__file__).resolve().parent / "rea_evidence"
+    rea_ev_names = (
+        "rea_workspace_surface_evidence.json",
+        "rea_generative_ui_evidence.json",
+        "rea_agent_frontend_evidence.json",
+    )
     rea_ev_files = [
-        forge_root / "rea_workspace_surface_evidence.json",
-        forge_root / "rea_generative_ui_evidence.json",
-        forge_root / "rea_agent_frontend_evidence.json",
+        (forge_root / nm) if (forge_root / nm).is_file() else (pkg_ev_dir / nm)
+        for nm in rea_ev_names
     ]
     rea_ev_present = all(f.exists() and f.stat().st_size > 500 for f in rea_ev_files)
     with tempfile.TemporaryDirectory() as tmp:
@@ -202,6 +207,8 @@ def run_agentic_live_verification(forge_root: Path, active_profile: ForkProfile)
         )
 
         runtime = LuminaraAgentRuntime(forge_root=work / "forge_state", cdp_host="127.0.0.1", cdp_port=cdp_port)
+        runtime.passport_token = ""
+        runtime.goals.router.use_env_providers = False
         http_srv = create_agent_http_server(runtime, host="127.0.0.1", port=agent_port)
         srv_thread = threading.Thread(target=http_srv.serve_forever, daemon=True)
         srv_thread.start()

@@ -20,6 +20,7 @@ from collections.abc import Callable
 import hashlib
 import hmac
 import json
+import math
 from pathlib import Path
 import re
 import secrets
@@ -80,18 +81,29 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         "[REDACTED:JWT]",
     ),
     (
+        re.compile(r"\b(lum2\.[A-Za-z0-9._\-]{20,})\b"),
+        "[REDACTED:SESSION_TOKEN]",
+    ),
+    (
         re.compile(r"(?i)(\bhttps?://)([^/\s:@\"'<>]+:[^/\s@\"'<>]+)(@)"),
         r"\1[REDACTED:URL_AUTH]\3",
     ),
     (
         re.compile(
-            r"(?i)([?&#](?:api_key|apikey|access_token|id_token|refresh_token|auth_token|client_secret|password|secret)=)([^&#\s\"'<>]+)"
+            r"(?i)((?:^|[?&#])(?:api_key|apikey|access_token|id_token|refresh_token|auth_token|session_token|lum_tok|lum_token|client_secret|password|passwd|secret)=)([^&#\s\"'<>]+)"
         ),
         r"\1[REDACTED:URL_SECRET]",
+    ),
+    (
+        re.compile(
+            r'(?i)("(?:password|passwd|client_secret|api_key|apikey|access_token|refresh_token|id_token|auth_token|totp_secret|secret)"\s*:\s*")([^"\r\n]{4,})(")'
+        ),
+        r"\1[REDACTED:JSON_SECRET]\3",
     ),
 )
 
 _BINARY_EXEMPT_KEYS = frozenset({"data_base64", "screenshotData", "bufferedData"})
+_PURE_BASE64_RE = re.compile(r"^[A-Za-z0-9+/=\r\n]{16,}$")
 
 
 def _unprotect_secret_at_rest(stored: str) -> str:
@@ -110,24 +122,49 @@ class LuminaraRedactor:
         self._literal_secrets: set[str] = set()
 
     def register_secret(self, secret_value: str) -> None:
-        """Register exact and URL-encoded forms of a secret so neither can be echoed back."""
+        """Register exact, URL-encoded, form-encoded, and Base64 forms of a secret."""
         cleaned = (secret_value or "").strip()
         if len(cleaned) >= 4:
             url_enc = urllib.parse.quote(cleaned, safe="")
+            plus_enc = urllib.parse.quote_plus(cleaned)
+            b64_enc = base64.b64encode(cleaned.encode(ENCODING)).decode("ascii") if len(cleaned) >= 6 else ""
             with self._lock:
                 self._literal_secrets.add(cleaned)
                 if len(url_enc) >= 4:
                     self._literal_secrets.add(url_enc)
+                if len(plus_enc) >= 4:
+                    self._literal_secrets.add(plus_enc)
+                if len(b64_enc) >= 8:
+                    self._literal_secrets.add(b64_enc)
+                    self._literal_secrets.add(b64_enc.rstrip("="))
 
-    def redact_text(self, text: str) -> str:
-        if not text or not isinstance(text, str):
-            return text
+    def _scrub_binary_base64_leaf(self, b64_text: str) -> str:
+        with self._lock:
+            literals = sorted(self._literal_secrets, key=len, reverse=True)
+        if not literals:
+            return b64_text
+        if any(lit in b64_text for lit in literals):
+            return "[REDACTED:BINARY_CONTAINING_SECRET]"
+        try:
+            raw_bytes = base64.b64decode(b64_text[:1_048_576], validate=False)
+            if any(lit.encode(ENCODING) in raw_bytes for lit in literals):
+                return "[REDACTED:BINARY_CONTAINING_SECRET]"
+        except Exception:  # noqa: BLE001
+            pass
+        return b64_text
+    def _scrub_literals_only(self, text: str) -> str:
         out = text
         with self._lock:
             literals = sorted(self._literal_secrets, key=len, reverse=True)
         for lit in literals:
             if lit in out:
                 out = out.replace(lit, "[REDACTED:VAULT_SECRET]")
+        return out
+
+    def redact_text(self, text: str) -> str:
+        if not text or not isinstance(text, str):
+            return text
+        out = self._scrub_literals_only(text)
         for pattern, replacement in _SECRET_PATTERNS:
             out = pattern.sub(replacement, out)
         return out
@@ -139,15 +176,19 @@ class LuminaraRedactor:
         exempt_keys: frozenset[str] = _BINARY_EXEMPT_KEYS,
         _depth: int = 0,
     ) -> Any:
-        """Recursively scrub strings in dicts/lists while preserving declared binary base64 leaves."""
+        """Recursively scrub strings in dicts/lists/sets while preserving pure binary base64 leaves."""
         if _depth >= MAX_REDACT_DEPTH:
             return REDACT_DEPTH_SENTINEL
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
         if isinstance(value, str):
             return self.redact_text(value)
         if isinstance(value, list):
             return [self.redact_payload(item, exempt_keys=exempt_keys, _depth=_depth + 1) for item in value]
         if isinstance(value, tuple):
             return tuple(self.redact_payload(item, exempt_keys=exempt_keys, _depth=_depth + 1) for item in value)
+        if isinstance(value, (set, frozenset)):
+            return [self.redact_payload(item, exempt_keys=exempt_keys, _depth=_depth + 1) for item in value]
         if not isinstance(value, dict):
             return value
 
@@ -155,13 +196,20 @@ class LuminaraRedactor:
         scrubbed: dict[str, Any] = {}
         for k, v in value.items():
             safe_key = self.redact_text(k) if isinstance(k, str) else k
-            is_binary_leaf = isinstance(v, str) and (
-                k in exempt_keys or (k in ("data", "body") and base64_flagged)
+            is_binary_leaf = (
+                isinstance(v, str)
+                and (k in exempt_keys or (k in ("data", "body") and base64_flagged))
+                and _PURE_BASE64_RE.match(v) is not None
             )
             if is_binary_leaf:
-                scrubbed[safe_key] = v
-            elif isinstance(k, str) and k.strip().lower() in _SENSITIVE_HEADER_KEYS and isinstance(v, str) and v.strip():
-                scrubbed[safe_key] = "[REDACTED:HEADER_SECRET]"
+                scrubbed[safe_key] = self._scrub_binary_base64_leaf(v)
+            elif isinstance(k, str) and k.strip().lower() in _SENSITIVE_HEADER_KEYS:
+                if isinstance(v, str) and v.strip():
+                    scrubbed[safe_key] = "[REDACTED:HEADER_SECRET]"
+                elif isinstance(v, (list, tuple, set, frozenset)) and v:
+                    scrubbed[safe_key] = ["[REDACTED:HEADER_SECRET]"] * len(v)
+                else:
+                    scrubbed[safe_key] = v
             else:
                 scrubbed[safe_key] = self.redact_payload(v, exempt_keys=exempt_keys, _depth=_depth + 1)
         return scrubbed
@@ -189,20 +237,42 @@ def normalize_origin(url_or_origin: str) -> str:
     return f"{scheme}://{fmt_host}"
 
 
-def generate_totp_code(base32_secret: str, timestamp: float | None = None, period: int = 30, digits: int = 6) -> str:
-    """Compute an RFC 6238 HMAC-SHA1 TOTP code using pure Python stdlib."""
-    cleaned = re.sub(r"[\s\-]+", "", (base32_secret or "")).upper()
+def _parse_totp_spec(raw_secret: str, default_period: int = 30, default_digits: int = 6) -> tuple[str, int, int, Any]:
+    raw = (raw_secret or "").strip()
+    algo_fn = hashlib.sha1
+    period = default_period
+    digits = default_digits
+    if raw.lower().startswith("otpauth://"):
+        parsed = urllib.parse.urlparse(raw)
+        qs = urllib.parse.parse_qs(parsed.query)
+        raw = (qs.get("secret") or [""])[0]
+        if qs.get("period"):
+            period = max(1, int(qs["period"][0]))
+        if qs.get("digits"):
+            digits = max(4, min(10, int(qs["digits"][0])))
+        alg = (qs.get("algorithm") or ["SHA1"])[0].upper()
+        if alg == "SHA256":
+            algo_fn = hashlib.sha256
+        elif alg == "SHA512":
+            algo_fn = hashlib.sha512
+    cleaned = re.sub(r"[\s\-]+", "", raw).rstrip("=").upper()
     if not cleaned:
         raise ValueError("TOTP secret must be non-empty Base32")
-    pad_len = (8 - (len(cleaned) % 8)) % 8
+    return cleaned, period, digits, algo_fn
+
+
+def generate_totp_code(base32_secret: str, timestamp: float | None = None, period: int = 30, digits: int = 6) -> str:
+    """Compute an RFC 6238 TOTP code (supporting raw Base32 and `otpauth://` URIs) using pure Python stdlib."""
+    cleaned, eff_period, eff_digits, algo_fn = _parse_totp_spec(base32_secret, default_period=period, default_digits=digits)
+    pad_len = (-len(cleaned)) % 8
     key_bytes = base64.b32decode(cleaned + ("=" * pad_len), casefold=True)
     ts = int(time.time() if timestamp is None else timestamp)
-    counter = ts // max(1, period)
+    counter = ts // max(1, eff_period)
     msg = struct.pack(">Q", counter)
-    digest = hmac.new(key_bytes, msg, hashlib.sha1).digest()
+    digest = hmac.new(key_bytes, msg, algo_fn).digest()
     offset = digest[-1] & 0x0F
     code_int = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
-    return str(code_int % (10**digits)).zfill(digits)
+    return str(code_int % (10**eff_digits)).zfill(eff_digits)
 
 
 _VAULT_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._\-]{0,63}$")
@@ -217,12 +287,39 @@ _VAULT_DOM_HELPERS_JS = r"""
       el.dispatchEvent(new win.Event('input', { bubbles: true }));
       el.dispatchEvent(new win.Event('change', { bubbles: true }));
     };
+    const isVisibleControl = (win, el) => {
+      if (!el || el.disabled || el.readOnly) return false;
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return false;
+      let cur = el;
+      while (cur) {
+        if (cur.nodeType === 1) {
+          if (cur.hidden || cur.getAttribute('aria-hidden') === 'true') return false;
+          const st = win.getComputedStyle(cur);
+          if (st.display === 'none' || st.visibility === 'hidden' || parseFloat(st.opacity || '1') <= 0) return false;
+        }
+        cur = cur.parentElement || (cur.getRootNode && cur.getRootNode().host) || null;
+      }
+      return true;
+    };
+    const queryAllDeep = (root, sel) => {
+      const out = Array.from(root.querySelectorAll(sel));
+      for (const host of Array.from(root.querySelectorAll('*'))) {
+        if (host.shadowRoot) out.push(...queryAllDeep(host.shadowRoot, sel));
+      }
+      return out;
+    };
     const collectSameOriginDocs = (expectedOrigin) => {
+      const want = expectedOrigin.toLowerCase();
       const list = [{ doc: document, win: window }];
       for (const fr of Array.from(document.querySelectorAll('iframe')).slice(0, 10)) {
         try {
-          if (fr.contentDocument && fr.contentWindow && fr.contentWindow.location.origin.toLowerCase() === expectedOrigin.toLowerCase()) {
-            list.push({ doc: fr.contentDocument, win: fr.contentWindow });
+          if (fr.contentDocument && fr.contentWindow) {
+            const locOrig = String(fr.contentWindow.location.origin || '').toLowerCase();
+            const winOrig = String(fr.contentWindow.origin || '').toLowerCase();
+            if (locOrig === want || (locOrig === 'null' && winOrig === want)) {
+              list.push({ doc: fr.contentDocument, win: fr.contentWindow });
+            }
           }
         } catch (_e) {}
       }
@@ -394,8 +491,12 @@ class LuminaraVault:
 
         if password:
             self.redactor.register_secret(password)
+            if username:
+                self.redactor.register_secret(f"{username}:{password}")
         if totp_secret:
             self.redactor.register_secret(totp_secret)
+            parsed_b32, _, _, _ = _parse_totp_spec(totp_secret)
+            self.redactor.register_secret(parsed_b32)
 
         with self._lock:
             existing = self._entries.get(vid)
@@ -504,19 +605,25 @@ class LuminaraVault:
     }}
     {_VAULT_DOM_HELPERS_JS}
     const docs = collectSameOriginDocs(expectedOrigin);
+    const userVal = {json.dumps(username)};
+    const userSel = 'input[autocomplete*="username" i], input[type="email"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[id*="user" i], input[id*="email" i], input[type="text"]';
     for (const ctx of docs) {{
-      const passInputs = Array.from(ctx.doc.querySelectorAll('input[type="password"]')).filter(
-        el => !el.disabled && !el.readOnly && el.getBoundingClientRect().width > 0
-      );
+      const passInputs = queryAllDeep(ctx.doc, 'input[type="password"]').filter(el => isVisibleControl(ctx.win, el));
       if (passInputs.length === 0) continue;
-      const passEl = passInputs[0];
+      const scopeOf = (p) => {{
+        const rn = p.getRootNode && p.getRootNode() !== ctx.doc ? p.getRootNode() : null;
+        return p.form || (p.closest && p.closest('form, [role="dialog"], main, section')) || rn || ctx.doc;
+      }};
+      let passEl = passInputs[0];
+      if (userVal && passInputs.length > 1) {{
+        const matched = passInputs.find(p => queryAllDeep(scopeOf(p), userSel).some(u => u !== p && u.type !== 'password' && isVisibleControl(ctx.win, u) && u.value === userVal));
+        const withUser = passInputs.find(p => queryAllDeep(scopeOf(p), userSel).some(u => u !== p && u.type !== 'password' && isVisibleControl(ctx.win, u)));
+        passEl = matched || withUser || passInputs[0];
+      }}
       const filled = [];
-      const userVal = {json.dumps(username)};
       if (userVal) {{
-        const scope = passEl.form || passEl.closest('form, [role="dialog"], main, section') || ctx.doc;
-        const userSel = 'input[autocomplete*="username" i], input[type="email"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[id*="user" i], input[id*="email" i], input[type="text"]';
-        const userInputs = Array.from(scope.querySelectorAll(userSel)).filter(
-          el => el !== passEl && el.type !== 'password' && !el.disabled && !el.readOnly && el.getBoundingClientRect().width > 0
+        const userInputs = queryAllDeep(scopeOf(passEl), userSel).filter(
+          el => el !== passEl && el.type !== 'password' && isVisibleControl(ctx.win, el)
         );
         if (userInputs.length > 0) {{
           setVal(ctx.win, userInputs[0], userVal);
@@ -569,17 +676,27 @@ class LuminaraVault:
     }}
     {_VAULT_DOM_HELPERS_JS}
     const docs = collectSameOriginDocs(expectedOrigin);
-    const otpSel = 'input[autocomplete="one-time-code"], input[name*="otp" i], input[name*="totp" i], input[name*="code" i], input[name*="2fa" i], input[name*="mfa" i], input[id*="otp" i], input[id*="code" i], input[inputmode="numeric"]';
+    const nonOtpNameRe = /(promo|coupon|discount|zip|postal|country|area|swift|bic|referral)/i;
+    const nonTextTypes = new Set(['password', 'hidden', 'submit', 'button', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color']);
+    const strictSel = 'input[autocomplete="one-time-code"], input[name*="otp" i], input[name*="totp" i], input[name*="2fa" i], input[name*="mfa" i], input[id*="otp" i], input[id*="totp" i], input[id*="2fa" i], input[id*="mfa" i]';
+    const broadSel = 'input[name*="code" i], input[id*="code" i], input[inputmode="numeric"], input[maxlength="1"]';
     for (const ctx of docs) {{
-      const candidates = Array.from(ctx.doc.querySelectorAll(otpSel)).filter(
-        el => el.type !== 'password' && !el.disabled && !el.readOnly && el.getBoundingClientRect().width > 0
+      const allInputs = queryAllDeep(ctx.doc, strictSel + ', ' + broadSel).filter(
+        el => !nonTextTypes.has(String(el.type || 'text').toLowerCase()) && isVisibleControl(ctx.win, el) && !nonOtpNameRe.test((el.name || '') + ' ' + (el.id || ''))
       );
-      if (candidates.length >= code.length && candidates.slice(0, code.length).every(el => el.maxLength === 1)) {{
-        for (let i = 0; i < code.length; i++) setVal(ctx.win, candidates[i], code[i]);
-        return {{ ok: true, filled_fields: ['one_time_code_split'], origin: window.location.origin }};
+      for (let i = 0; i + code.length <= allInputs.length; i++) {{
+        const slice = allInputs.slice(i, i + code.length);
+        if (slice.every(el => el.maxLength === 1)) {{
+          for (let j = 0; j < code.length; j++) setVal(ctx.win, slice[j], code[j]);
+          return {{ ok: true, filled_fields: ['one_time_code_split'], origin: window.location.origin }};
+        }}
       }}
-      if (candidates.length > 0) {{
-        setVal(ctx.win, candidates[0], code);
+      const strictHits = queryAllDeep(ctx.doc, strictSel).filter(
+        el => !nonTextTypes.has(String(el.type || 'text').toLowerCase()) && isVisibleControl(ctx.win, el)
+      );
+      const targetEl = strictHits[0] || allInputs.find(el => el.maxLength !== 1) || allInputs[0];
+      if (targetEl) {{
+        setVal(ctx.win, targetEl, code);
         return {{ ok: true, filled_fields: ['one_time_code'], origin: window.location.origin }};
       }}
     }}

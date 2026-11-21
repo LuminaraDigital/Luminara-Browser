@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Zero-dependency CLI controller for Luminara Browser Agent Daemon v3.0.0 (`127.0.0.1:8796`).
+"""Zero-dependency CLI controller for Luminara Browser Agent Daemon v3.1.0 (`127.0.0.1:8796`).
 
-Exposes all 20 MCP v2 co-browsing, perception, WebMCP, mutation-firewall, workspace,
+Exposes all 28 MCP v2 co-browsing, perception, outline, wait, screenshot, schedule,
+WebMCP, mutation-firewall, sequence-guard, VRT, monitors, search-eval, workspace,
 tab-hibernation, vault, dialog, pipeline, playbook, and ledger tools safely.
 """
 
@@ -23,7 +24,29 @@ def _daemon_url() -> str:
     return (os.environ.get("LUMINARA_AGENT_URL") or "http://127.0.0.1:8796").rstrip("/")
 
 
-def _headers(is_post: bool) -> dict[str, str]:
+def _discover_newest_local_ui_key() -> str:
+    candidates: list[Path] = []
+    env_forge = (os.environ.get("LUMINARA_FORGE_ROOT") or "").strip()
+    if env_forge:
+        candidates.append(Path(env_forge).expanduser() / "outputs" / "local_ui_key.txt")
+    candidates.append(Path.home() / ".luminara-browser" / "local_ui_key.txt")
+    cwd = Path.cwd()
+    for base in (cwd, cwd / "chromium-forge", cwd / "Agent", Path(__file__).resolve().parents[3] / "chromium-forge"):
+        if (base / "fork.json").is_file():
+            candidates.append(base / "outputs" / "local_ui_key.txt")
+    existing = [p for p in candidates if p.is_file()]
+    existing.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for cand in existing:
+        try:
+            val = cand.read_text(encoding=ENCODING).strip()
+            if val:
+                return val
+        except OSError:
+            continue
+    return ""
+
+
+def _headers(is_post: bool, *, include_disk_ui_key: bool = False) -> dict[str, str]:
     hdrs: dict[str, str] = {}
     if is_post:
         hdrs["Content-Type"] = "application/json"
@@ -31,31 +54,20 @@ def _headers(is_post: bool) -> dict[str, str]:
     if tok:
         hdrs["Authorization"] = f"Bearer {tok}"
     ui_key = (os.environ.get("LUMINARA_UI_KEY") or "").strip()
-    if not ui_key:
-        for cand in (
-            Path(__file__).resolve().parents[3] / "chromium-forge" / "outputs" / "local_ui_key.txt",
-            Path.cwd() / "chromium-forge" / "outputs" / "local_ui_key.txt",
-            Path.cwd() / "outputs" / "local_ui_key.txt",
-        ):
-            if cand.is_file():
-                try:
-                    ui_key = cand.read_text(encoding=ENCODING).strip()
-                    if ui_key:
-                        break
-                except OSError:
-                    pass
+    if not ui_key and include_disk_ui_key:
+        ui_key = _discover_newest_local_ui_key()
     if ui_key:
         hdrs["X-Luminara-UI-Key"] = ui_key
     return hdrs
 
 
-def _request(path: str, payload: dict[str, object] | None = None) -> dict[str, object]:
+def _request(path: str, payload: dict[str, object] | None = None, *, human_auth: bool = False) -> dict[str, object]:
     url = f"{_daemon_url()}{path}"
     data = json.dumps(payload).encode(ENCODING) if payload is not None else None
     req = urllib.request.Request(
         url,
         data=data,
-        headers=_headers(payload is not None),
+        headers=_headers(payload is not None, include_disk_ui_key=human_auth),
         method="POST" if payload is not None else "GET",
     )
     with urllib.request.urlopen(req, timeout=45.0) as resp:
@@ -71,7 +83,8 @@ def _resolve_secret_safe_text(inline: str, env_var: str | None, use_stdin: bool)
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="luminara_ctl", description="Control Luminara Browser v3.0.0 (20 MCP v2 tools)")
+    p = argparse.ArgumentParser(prog="luminara_ctl", description="Control Luminara Browser v3.1.0 (28 MCP v2 tools)")
+    p.add_argument("--human-auth", action="store_true", help="Authorize human-only security overrides using local_ui_key.txt")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("status", help="Show daemon health, CDP mux state, vault encryption, active handoffs, and recent LUM-* receipts")
@@ -211,21 +224,90 @@ def main(argv: list[str] | None = None) -> int:
     p_res.add_argument("--run-id", required=True)
     p_res.add_argument("--workspace-id", default="default")
 
+    p_out = sub.add_parser("outline", help="Accessibility outline with stable [ref=eN] handles, diff, grep, click, and type (browser_outline)")
+    p_out.add_argument("--action", default="snapshot", choices=["snapshot", "diff", "grep", "click", "type"])
+    p_out.add_argument("--target-id", default=None)
+    p_out.add_argument("--ref", default=None)
+    p_out.add_argument("--text", default="")
+    p_out.add_argument("--press-enter", action="store_true")
+    p_out.add_argument("--pattern", default="")
+    p_out.add_argument("--interactive-only", action="store_true")
+
+    p_wait = sub.add_parser("wait", help="Wait up to 30s for DOM settle, time, visible text, or CSS selector (browser_wait)")
+    p_wait.add_argument("--for", dest="wait_for", default="settle", choices=["settle", "time", "text", "selector"])
+    p_wait.add_argument("--value", default="")
+    p_wait.add_argument("--timeout-sec", type=float, default=10.0)
+    p_wait.add_argument("--target-id", default=None)
+
+    p_shot = sub.add_parser("screenshot", help="Capture visible viewport as base64 JPEG, PNG, or WebP (browser_screenshot)")
+    p_shot.add_argument("--target-id", default=None)
+    p_shot.add_argument("--format", default="jpeg", choices=["jpeg", "png", "webp"])
+    p_shot.add_argument("--quality", type=int, default=75)
+
+    p_sched = sub.add_parser("schedule", help="Manage interval/daily scheduled goals (browser_schedule)")
+    p_sched.add_argument("--action", default="list", choices=["list", "add", "remove", "enable", "disable", "run_now"])
+    p_sched.add_argument("--task-id", default=None)
+    p_sched.add_argument("--goal", default="")
+    p_sched.add_argument("--start-url", default="")
+    p_sched.add_argument("--kind", default="interval", choices=["interval", "daily"])
+    p_sched.add_argument("--every-min", type=int, default=None)
+    p_sched.add_argument("--at", default=None)
+    p_sched.add_argument("--max-steps", type=int, default=8)
+
+    p_seq = sub.add_parser("sequences", help="Inspect Numbat-derived Sequence Guard, evaluate events, export/verify signed CASE-*.zip bundles, or clear blocks (browser_sequence_guard)")
+    p_seq.add_argument("--action", default="status", choices=["status", "evaluate", "export_casebundle", "verify_casebundle", "clear_block"])
+    p_seq.add_argument("--tool-name", default="")
+    p_seq.add_argument("--event-json", default="{}")
+    p_seq.add_argument("--target-url", default="")
+    p_seq.add_argument("--case-id", default=None)
+    p_seq.add_argument("--bundle-path", default=None)
+    p_seq.add_argument("--target-agent-id", default=None)
+
+    p_vrt = sub.add_parser("vrt", help="Lock/unlock declared HTTP(S) origins and capture/compare pure-stdlib PNG VRT baselines (browser_vrt_isolation)")
+    p_vrt.add_argument("--action", default="status", choices=["status", "lock_origins", "unlock_origins", "capture_baseline", "compare_vrt"])
+    p_vrt.add_argument("--target-id", default=None)
+    p_vrt.add_argument("--origins", default="", help="Comma-separated declared http(s) origins")
+    p_vrt.add_argument("--baseline-id", default=None)
+    p_vrt.add_argument("--max-mismatch-ratio", type=float, default=0.01)
+
+    p_mon = sub.add_parser("monitors", help="Manage fenced SQLite WAL Web Monitors and CAS Playbook Revisions (browser_monitors)")
+    p_mon.add_argument("--action", default="list", choices=["list", "create", "run_now", "runs", "delete", "snapshot_revision", "list_revisions", "rollback_playbook"])
+    p_mon.add_argument("--monitor-id", default=None)
+    p_mon.add_argument("--workspace-id", default="default")
+    p_mon.add_argument("--name", default=None)
+    p_mon.add_argument("--target-url", default=None)
+    p_mon.add_argument("--extract-selector", default="body")
+    p_mon.add_argument("--webhook-url", default="")
+    p_mon.add_argument("--interval-sec", type=int, default=3600)
+    p_mon.add_argument("--limit", type=int, default=25)
+    p_mon.add_argument("--playbook-id", default=None)
+    p_mon.add_argument("--expected-revision", default=None)
+    p_mon.add_argument("--target-revision", default=None)
+
+    p_evl = sub.add_parser("eval", help="Run multi-provider Search/Extraction Eval Suite or validate Perplexity wire contracts (browser_search_eval)")
+    p_evl.add_argument("--action", default="scorecard", choices=["scorecard", "run_suite", "validate_wire"])
+    p_evl.add_argument("--suite", default="extraction")
+    p_evl.add_argument("--providers", default="", help="Comma-separated provider list")
+    p_evl.add_argument("--endpoint", default="")
+    p_evl.add_argument("--wire-json", default="{}")
+
     args = p.parse_args(argv)
+
+    req_fn = lambda path, payload=None: _request(path, payload, human_auth=bool(args.human_auth))
 
     try:
         if args.cmd == "status":
-            out = _request("/api/agent/status")
+            out = req_fn("/api/agent/status")
         elif args.cmd == "tabs":
-            out = _request("/api/agent/tabs")
+            out = req_fn("/api/agent/tabs")
         elif args.cmd == "verify-ledger":
-            out = _request("/api/agent/ledger/verify")
+            out = req_fn("/api/agent/ledger/verify")
         elif args.cmd == "open":
-            out = _request("/api/agent/open", {"url": args.url, "background": not args.foreground})
+            out = req_fn("/api/agent/open", {"url": args.url, "background": not args.foreground})
         elif args.cmd == "close":
-            out = _request("/api/agent/close", {"target_id": args.target_id})
+            out = req_fn("/api/agent/close", {"target_id": args.target_id})
         elif args.cmd == "snapshot":
-            out = _request(
+            out = req_fn(
                 "/api/agent/snapshot",
                 {
                     "target_id": args.target_id,
@@ -236,7 +318,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.cmd == "act":
             txt = _resolve_secret_safe_text(args.text, args.text_env, args.text_stdin)
-            out = _request(
+            out = req_fn(
                 "/api/agent/act",
                 {
                     "action": args.action,
@@ -250,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.cmd == "dialog":
             ptxt = _resolve_secret_safe_text(args.prompt_text, args.text_env, args.text_stdin)
-            out = _request(
+            out = req_fn(
                 "/api/agent/dialog",
                 {
                     "action": args.action,
@@ -263,6 +345,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.action == "register":
                 if args.stdin:
                     stdin_obj = json.loads(sys.stdin.read())
+                    if not isinstance(stdin_obj, dict):
+                        raise ValueError("vault --action register --stdin requires a JSON object")
                     v_payload: dict[str, object] = {"action": "register", **stdin_obj}
                 else:
                     if not args.origin:
@@ -280,11 +364,11 @@ def main(argv: list[str] | None = None) -> int:
                         "totp_secret": totp,
                         "label": args.label,
                     }
-                out = _request("/api/agent/vault", v_payload)
+                out = req_fn("/api/agent/vault", v_payload)
             else:
                 if args.action in ("fill", "enter_totp", "delete") and not args.vault_id:
                     raise ValueError(f"vault --action {args.action} requires --vault-id")
-                out = _request(
+                out = req_fn(
                     "/api/agent/vault",
                     {"action": args.action, "vault_id": args.vault_id, "origin": args.origin, "target_id": args.target_id},
                 )
@@ -300,11 +384,11 @@ def main(argv: list[str] | None = None) -> int:
                 pipe_body["script"] = sys.stdin.read()
             else:
                 raise ValueError("pipeline requires --script, --script-file, --steps-file, or --stdin")
-            out = _request("/api/agent/pipeline", pipe_body)
+            out = req_fn("/api/agent/pipeline", pipe_body)
         elif args.cmd == "playbooks":
             if args.action == "delete" and not args.playbook_id:
                 raise ValueError("playbooks --action delete requires --playbook-id")
-            out = _request(
+            out = req_fn(
                 "/api/agent/playbooks",
                 {
                     "action": args.action,
@@ -318,7 +402,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.cmd == "perception":
             txt = _resolve_secret_safe_text(args.text, args.text_env, args.text_stdin)
-            out = _request(
+            out = req_fn(
                 "/api/agent/perception",
                 {
                     "action": args.action,
@@ -333,12 +417,12 @@ def main(argv: list[str] | None = None) -> int:
                 },
             )
         elif args.cmd == "webmcp-list":
-            out = _request("/api/agent/webmcp/list", {"target_id": args.target_id})
+            out = req_fn("/api/agent/webmcp/list", {"target_id": args.target_id})
         elif args.cmd == "webmcp-call":
             parsed_args = json.loads(sys.stdin.read() if args.stdin else args.args_json)
             if not isinstance(parsed_args, dict):
                 raise ValueError("webmcp-call arguments must be a JSON object")
-            out = _request(
+            out = req_fn(
                 "/api/agent/webmcp/call",
                 {
                     "tool_name": args.tool_name,
@@ -350,7 +434,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "mutations":
             if args.action in ("approve", "reject") and not args.mutation_id:
                 raise ValueError(f"mutations --action {args.action} requires --mutation-id")
-            out = _request(
+            out = req_fn(
                 "/api/agent/mutations",
                 {
                     "action": args.action,
@@ -369,7 +453,7 @@ def main(argv: list[str] | None = None) -> int:
             if rows_payload is not None and not isinstance(rows_payload, list):
                 raise ValueError("workspaces --action index requires a JSON array of row objects")
             eff_ws_id = args.workspace_id if args.action == "search" else (args.workspace_id or "default")
-            out = _request(
+            out = req_fn(
                 "/api/agent/workspaces",
                 {
                     "action": args.action,
@@ -387,7 +471,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "hibernate":
             if args.action in ("wake", "pin", "unpin") and not args.target_id:
                 raise ValueError(f"hibernate --action {args.action} requires --target-id")
-            out = _request(
+            out = req_fn(
                 "/api/agent/hibernate",
                 {
                     "action": args.action,
@@ -397,11 +481,11 @@ def main(argv: list[str] | None = None) -> int:
                 },
             )
         elif args.cmd == "extract":
-            out = _request("/api/agent/extract", {"target_id": args.target_id, "format": args.format, "workspace_id": args.workspace_id})
+            out = req_fn("/api/agent/extract", {"target_id": args.target_id, "format": args.format, "workspace_id": args.workspace_id})
         elif args.cmd == "genui":
-            out = _request("/api/agent/genui", {"target_id": args.target_id, "workspace_id": args.workspace_id})
+            out = req_fn("/api/agent/genui", {"target_id": args.target_id, "workspace_id": args.workspace_id})
         elif args.cmd == "goal":
-            out = _request(
+            out = req_fn(
                 "/api/agent/goal",
                 {
                     "goal": args.goal,
@@ -413,12 +497,111 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.cmd == "bulk":
             urls = [u.strip() for u in args.urls.split(",") if u.strip()]
-            out = _request(
+            out = req_fn(
                 "/api/agent/bulk",
                 {"urls": urls, "concurrency": args.concurrency, "format": args.format, "workspace_id": args.workspace_id},
             )
         elif args.cmd == "resume":
-            out = _request("/api/agent/handoff/resume", {"run_id": args.run_id, "workspace_id": args.workspace_id})
+            out = req_fn("/api/agent/handoff/resume", {"run_id": args.run_id, "workspace_id": args.workspace_id})
+        elif args.cmd == "outline":
+            out = req_fn(
+                "/api/agent/outline",
+                {
+                    "action": args.action,
+                    "target_id": args.target_id,
+                    "ref": args.ref,
+                    "text": args.text,
+                    "press_enter": args.press_enter,
+                    "pattern": args.pattern,
+                    "interactive_only": args.interactive_only,
+                },
+            )
+        elif args.cmd == "wait":
+            out = req_fn(
+                "/api/agent/wait",
+                {
+                    "for": args.wait_for,
+                    "value": args.value,
+                    "timeout_sec": args.timeout_sec,
+                    "target_id": args.target_id,
+                },
+            )
+        elif args.cmd == "screenshot":
+            out = req_fn(
+                "/api/agent/screenshot",
+                {"target_id": args.target_id, "format": args.format, "quality": args.quality},
+            )
+        elif args.cmd == "schedule":
+            out = req_fn(
+                "/api/agent/schedule",
+                {
+                    "action": args.action,
+                    "task_id": args.task_id,
+                    "goal": args.goal,
+                    "start_url": args.start_url,
+                    "kind": args.kind,
+                    "every_min": args.every_min,
+                    "at": args.at,
+                    "max_steps": args.max_steps,
+                },
+            )
+        elif args.cmd == "sequences":
+            ev_params = json.loads(args.event_json) if args.action == "evaluate" else {}
+            out = req_fn(
+                "/api/agent/sequences",
+                {
+                    "action": args.action,
+                    "tool_name": args.tool_name,
+                    "event_params": ev_params,
+                    "target_url": args.target_url,
+                    "case_id": args.case_id,
+                    "bundle_path": args.bundle_path,
+                    "target_agent_id": args.target_agent_id,
+                },
+            )
+        elif args.cmd == "vrt":
+            origs = [o.strip() for o in args.origins.split(",") if o.strip()] if args.origins else None
+            out = req_fn(
+                "/api/agent/vrt",
+                {
+                    "action": args.action,
+                    "target_id": args.target_id,
+                    "declared_origins": origs,
+                    "baseline_id": args.baseline_id,
+                    "max_mismatch_ratio": args.max_mismatch_ratio,
+                },
+            )
+        elif args.cmd == "monitors":
+            out = req_fn(
+                "/api/agent/monitors",
+                {
+                    "action": args.action,
+                    "monitor_id": args.monitor_id,
+                    "workspace_id": args.workspace_id,
+                    "name": args.name,
+                    "target_url": args.target_url,
+                    "extract_selector": args.extract_selector,
+                    "webhook_url": args.webhook_url,
+                    "interval_sec": args.interval_sec,
+                    "limit": args.limit,
+                    "playbook_id": args.playbook_id,
+                    "expected_revision": args.expected_revision,
+                    "target_revision": args.target_revision,
+                },
+            )
+        elif args.cmd == "eval":
+            provs = [x.strip() for x in args.providers.split(",") if x.strip()] if args.providers else None
+            wire_obj = json.loads(args.wire_json) if args.action == "validate_wire" else None
+            out = req_fn(
+                "/api/agent/eval",
+                {
+                    "action": args.action,
+                    "suite": args.suite,
+                    "providers": provs,
+                    "endpoint": args.endpoint,
+                    "wire_payload": wire_obj,
+                },
+            )
         else:
             return 1
     except urllib.error.HTTPError as herr:
@@ -438,11 +621,13 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 1
-    except ValueError as verr:
+    except (ValueError, OSError) as verr:
         print(json.dumps({"ok": False, "error": str(verr)}, indent=2))
         return 1
 
     print(json.dumps(out, indent=2, ensure_ascii=False))
+    if isinstance(out, dict) and (out.get("ok") is False or out.get("valid") is False):
+        return 1
     return 0
 
 

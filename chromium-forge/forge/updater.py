@@ -29,9 +29,11 @@ def canonical_manifest_bytes(manifest: dict[str, Any]) -> bytes:
 
 def sign_release_manifest(manifest: dict[str, Any], signing_key: bytes) -> dict[str, Any]:
     """Attach an authenticated HMAC-SHA256 signature + SHA-256 digest to a release manifest."""
+    if not isinstance(signing_key, (bytes, bytearray)) or len(signing_key) < 32:
+        raise ValueError("Release signing key must be at least 32 bytes (64 hex chars)")
     canon = canonical_manifest_bytes(manifest)
     digest = hashlib.sha256(canon).hexdigest()
-    sig = hmac.new(signing_key, b"luminara-release-v3:" + canon, hashlib.sha256).hexdigest()
+    sig = hmac.new(bytes(signing_key), b"luminara-release-v3:" + canon, hashlib.sha256).hexdigest()
     out = dict(manifest)
     out["manifest_sha256"] = digest
     out["signature"] = f"hmac-sha256:{sig}"
@@ -59,15 +61,18 @@ def verify_release_manifest(
 
     sig_verified = False
     if signing_key is not None:
-        sig_str = str(manifest.get("signature") or "")
-        if not sig_str.startswith("hmac-sha256:"):
-            errors.append("Missing or unsupported signature scheme")
+        if len(signing_key) < 32:
+            errors.append("signing_key must be at least 32 bytes (64 hex chars)")
         else:
-            expected_sig = "hmac-sha256:" + hmac.new(signing_key, b"luminara-release-v3:" + canon, hashlib.sha256).hexdigest()
-            if not hmac.compare_digest(sig_str, expected_sig):
-                errors.append("Cryptographic release signature mismatch")
+            sig_str = str(manifest.get("signature") or "")
+            if not sig_str.startswith("hmac-sha256:"):
+                errors.append("Missing or unsupported signature scheme")
             else:
-                sig_verified = True
+                expected_sig = "hmac-sha256:" + hmac.new(signing_key, b"luminara-release-v3:" + canon, hashlib.sha256).hexdigest()
+                if not hmac.compare_digest(sig_str, expected_sig):
+                    errors.append("Cryptographic release signature mismatch")
+                else:
+                    sig_verified = True
     elif not allow_unsigned:
         errors.append("No signing_key provided (pass --signing-key-hex / LUMINARA_RELEASE_KEY_HEX or --allow-unsigned)")
 
@@ -123,7 +128,10 @@ class _HTTPSOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
 def load_manifest_source(source: str) -> dict[str, Any]:
     """Load a release manifest from a local JSON path or SSRF-checked HTTPS URL (<= 1 MiB)."""
     cleaned = (source or "").strip()
-    if cleaned.startswith("https://"):
+    lower = cleaned.lower()
+    if lower.startswith("http://"):
+        raise ValueError(f"Blocked insecure non-HTTPS manifest URL: {cleaned}")
+    if lower.startswith("https://"):
         _assert_public_https_host(cleaned)
         opener = urllib.request.build_opener(_HTTPSOnlyRedirectHandler())
         with opener.open(cleaned, timeout=15.0) as resp:

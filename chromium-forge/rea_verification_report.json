@@ -3,9 +3,9 @@
   "brand_name": "Luminara Browser",
   "slug": "luminara-browser",
   "all_obligations_passed": true,
-  "passed_count": 14,
-  "total_count": 14,
-  "elapsed_ms": 6126.7,
+  "passed_count": 21,
+  "total_count": 21,
+  "elapsed_ms": 15139.3,
   "obligations": [
     {
       "obligation_id": "OBL-01",
@@ -101,7 +101,7 @@
         },
         "headless_smoke": {
           "exit_code": 0,
-          "dom_length": 40303,
+          "dom_length": 52444,
           "rendered_custom_ntp": true
         }
       }
@@ -192,12 +192,96 @@
       "confidence": "observed",
       "upstream_evidence": "forge/agent_server.py + Luminara MCP v2 2025-06-18 + SHA-256 chain verifier",
       "passed": true,
-      "details": "Verified `/llms.txt`, `/.well-known/agent.json`, 20 MCP v2 tools (`2025-06-18`), 403 rejection of DNS-rebinding & unkeyed `Origin: null`, and 8 hash-chained `LUM-*` receipts.",
+      "details": "Verified `/llms.txt`, `/.well-known/agent.json`, 28 MCP v2 tools (`2025-06-18`), 403 rejection of DNS-rebinding & unkeyed `Origin: null`, and 8 hash-chained `LUM-*` receipts.",
       "metrics": {
-        "mcp_tools": 20,
+        "mcp_tools": 28,
         "dns_rebind_blocked": true,
         "null_sandbox_blocked": true,
         "chain_verified_receipts": 8
+      }
+    },
+    {
+      "obligation_id": "OBL-15",
+      "title": "Numbat Partitioned Sequence Correlator, Pre-Action Chain Block & Signed Casebundle",
+      "confidence": "observed",
+      "upstream_evidence": "perplexityai/numbat internal/sequence/sequence.go + casebundle/build.go; REA ev_311714118878f971cd13a73640b57c8eb1c3e347442e86caec7eeb4c6ff42feb,ev_79ba715beaa3c17d6d5cf2550a2723cd63a0a2aa58f6ef446b244ee509367e50",
+      "passed": true,
+      "details": "Verified session partitioning, disordered-clock safety, CHAIN-01 cross-origin block, and LUM-SIG-V2 casebundle verification.",
+      "metrics": {
+        "rea_evidence_count": 4,
+        "casebundle_verified": true
+      }
+    },
+    {
+      "obligation_id": "OBL-16",
+      "title": "SPACE Architecture Pattern Ratchet (<1,000L, Zero-Dep, Layer Guard) & Lease Epoch Fencing",
+      "confidence": "observed",
+      "upstream_evidence": "perplexityai/SPACE ARCHITECTURE.toml + state/reconciliation; REA ev_adff4b085b51b54520b3e04626cb7fd926b852d79ddcfda09f2bacda3041fb10",
+      "passed": true,
+      "details": "Verified 55 files (max 952L < 1,000L), 0 layer/XSS leaks, and monotonic lease_epoch fencing.",
+      "metrics": {
+        "max_observed_lines": 952,
+        "largest_file": "chromium-forge/forge/luminara_automation.py"
+      }
+    },
+    {
+      "obligation_id": "OBL-17",
+      "title": "Codescythe Two-Set Dead-File & Export Reachability Analyzer",
+      "confidence": "observed",
+      "upstream_evidence": "perplexityai/codescythe ARCHITECTURE.md; REA ev_2b2f3036c3ff6c2d3aa5a33d426c0bbaa2032eac492317261788a7b9da8d5550,ev_4b24a14f74d0665abfacd6adcf635e8bf0f748f2b69955781229409840b0d2d6",
+      "passed": true,
+      "details": "Verified 51/51 forge modules reachable and synthetic orphan module caught.",
+      "metrics": {
+        "reachable_modules": 51,
+        "unreferenced_exports": 0
+      }
+    },
+    {
+      "obligation_id": "OBL-18",
+      "title": "Hermetic Declared-Origin Network Lock & Pure-Stdlib RFC 2083 PNG Visual Regression",
+      "confidence": "observed",
+      "upstream_evidence": "perplexityai/rules_web_e2e runtime/isolation.ts + visuals.ts; REA ev_5b859337d2c9fed8d60c06942d0944af1085e07fc57a11452decd01c0297365f",
+      "passed": true,
+      "details": "Verified pure-stdlib PNG encode/decode/diff bounding-box math and declared-origin third-party egress blocking.",
+      "metrics": {
+        "single_pixel_mismatch_ratio": 0.0625,
+        "third_party_blocked": true
+      }
+    },
+    {
+      "obligation_id": "OBL-19",
+      "title": "Perplexity 14-Endpoint Wire Schema, Fenced Web Monitors & CAS Playbook Revisions",
+      "confidence": "observed",
+      "upstream_evidence": "perplexityai/perplexity-py api.md + .stats.yml; REA ev_6587202628a424c1c483dc1c10d5774b597f6d4df3149157cc775f5abed5b28e",
+      "passed": true,
+      "details": "Verified selector-scoped INITIALIZED->UNCHANGED->CHANGED transitions, CAS conflict rejection, PlaybookMemory disk rollback, and 14 SDK endpoints.",
+      "metrics": {
+        "sdk_endpoints": 14,
+        "revisions_tested": 3
+      }
+    },
+    {
+      "obligation_id": "OBL-20",
+      "title": "Search Evals Exact Decimal CostLedger (Deduplicated Containers) & Citation F1 Grader",
+      "confidence": "observed",
+      "upstream_evidence": "perplexityai/search_evals search_evals/costs.py:12-109 + suites/graders.py; REA ev_5e7f00cd34b44227327c372623302a48dc3838ca8123647a0ddf1c03e3de2bd4",
+      "passed": true,
+      "details": "Verified exact 6-decimal ROUND_HALF_UP token/search/container deduplication ($0.054700) and honest provider/zero-LLM F1 grading.",
+      "metrics": {
+        "verified_cost_usd": 0.0547,
+        "providers_evaluated": 2
+      }
+    },
+    {
+      "obligation_id": "OBL-21",
+      "title": "MoE All-to-All NVSHMEM Symmetric Heap Alignment, Split-Phase State Machine & CUDA Unknowns",
+      "confidence": "observed",
+      "upstream_evidence": "perplexityai/pplx-kernels src/pplx_kernels/all_to_all.py:27-120 + csrc/all_to_all/*.cu; REA ev_3c5a35ebe1ae6e724a905b2f546942517771565e06f04be19882f7d82d8825f9",
+      "passed": true,
+      "details": "Verified 128B NVSHMEM symmetric heap math, split-phase send/recv state transitions, invalid dp_size rejection, and explicit CUDA SASS ResidualUnknown.",
+      "metrics": {
+        "symmetric_heap_bytes_per_rank": 236980224,
+        "residual_unknowns_recorded": 1
       }
     }
   ],

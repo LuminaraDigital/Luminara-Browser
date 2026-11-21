@@ -1,0 +1,394 @@
+{
+  "schema": "luminara.rea.perplexity.v1",
+  "rea_package": "rea-agents@6.5.0",
+  "host_platform": "windows-amd64",
+  "source_mode": "live_rea_harvest",
+  "target_count": 7,
+  "targets_present": 7,
+  "total_evidence_records": 12,
+  "elapsed_ms": 24167.2,
+  "targets": [
+    {
+      "repo": "perplexityai/SPACE",
+      "slug": "SPACE",
+      "obligation_id": "OBL-16",
+      "route": "source_control_plane_and_nextjs_ui",
+      "present": true,
+      "observed_anchors": {
+        "ARCHITECTURE.toml": {
+          "kind": "file",
+          "bytes": 32269,
+          "sha256": "16a67d11877ac80d6e06b2d9f2f2689ed7efbc7dbb14be450c603884c516b9f2"
+        },
+        "Cargo.toml": {
+          "kind": "file",
+          "bytes": 32065,
+          "sha256": "05b7519b772a29e93776604867e640fae5bc5460ff954f11ba4e454720ea46cd"
+        },
+        "crates/l20_domain/state/reconciliation": {
+          "kind": "directory",
+          "file_count": 3
+        }
+      },
+      "rea_evidence": [
+        {
+          "operation": "analyze_javascript_application",
+          "evidence_id": "ev_adff4b085b51b54520b3e04626cb7fd926b852d79ddcfda09f2bacda3041fb10",
+          "confidence": "derived",
+          "authority": "shipped-artifact",
+          "selected_sources": [
+            "package.json",
+            "next.config.js"
+          ]
+        }
+      ]
+    },
+    {
+      "repo": "perplexityai/codescythe",
+      "slug": "codescythe",
+      "obligation_id": "OBL-17",
+      "route": "rust_napi_binary_and_js_wrapper",
+      "present": true,
+      "observed_anchors": {
+        "ARCHITECTURE.md": {
+          "kind": "file",
+          "bytes": 25571,
+          "sha256": "ca600bb7c3b57926dc0d29938a4a70cebfb5b2adb184d8afd8f0c33ea05deaeb"
+        },
+        "codescythe.schema.json": {
+          "kind": "file",
+          "bytes": 2719,
+          "sha256": "ac6031373c0f446cbd2d32d7e86f2e5c826d26a3c256409165a13a97b1bcef6b"
+        },
+        "crates/codescythe": {
+          "kind": "directory",
+          "file_count": 17
+        }
+      },
+      "rea_evidence": [
+        {
+          "operation": "analyze_javascript_application",
+          "evidence_id": "ev_2b2f3036c3ff6c2d3aa5a33d426c0bbaa2032eac492317261788a7b9da8d5550",
+          "confidence": "derived",
+          "authority": "shipped-artifact",
+          "selected_sources": [
+            "package.json",
+            "index.ts",
+            "bin/codescythe.ts"
+          ]
+        },
+        {
+          "operation": "inspect_rust_binary",
+          "artifact": "_releases/codescythe-windows-amd64.exe",
+          "sha256": "e4a9424734ad3309efcc00b2e6c2056aa5c005cfa742347aadb06f284f7d02e4",
+          "evidence_id": "ev_4b24a14f74d0665abfacd6adcf635e8bf0f748f2b69955781229409840b0d2d6",
+          "confidence": "observed",
+          "auditable_metadata_present": false,
+          "inferred_rustc_commit": "59807616e1fa2540724bfbac14d7976d7e4a3860"
+        },
+        {
+          "operation": "inspect_pe_resources",
+          "artifact": "_releases/codescythe-windows-amd64.exe",
+          "evidence_id": "ev_7738a2c88f0c8903b6cf27e1e4211b2c302554ab6d469f09eb7cac0be86bd897",
+          "confidence": "observed"
+        }
+      ]
+    },
+    {
+      "repo": "perplexityai/numbat",
+      "slug": "numbat",
+      "obligation_id": "OBL-15",
+      "route": "go_binary_and_sequence_casebundle_engine",
+      "present": true,
+      "observed_anchors": {
+        "go.mod": {
+          "kind": "file",
+          "bytes": 645,
+          "sha256": "25e9d6f8ba19092142d60fe1d3181cc056f52fb6b6f2aa01953298fb764e5f15"
+        },
+        "internal/sequence/sequence.go": {
+          "kind": "file",
+          "bytes": 16044,
+          "sha256": "d742b70b8cbf4151deb689f8e8010e093635b2d1fb7d941232ce917ca6172d88"
+        },
+        "internal/casebundle/build.go": {
+          "kind": "file",
+          "bytes": 29029,
+          "sha256": "1931f0319d9a87e9eb10bd3b90d3113e97d5bcd3493a5e1558e6ec3fd51de1eb"
+        },
+        "rules": {
+          "kind": "directory",
+          "file_count": 112
+        }
+      },
+      "rea_evidence": [
+        {
+          "operation": "inspect_artifact",
+          "artifact": "numbat_reference_anchors.zip",
+          "evidence_id": "ev_311714118878f971cd13a73640b57c8eb1c3e347442e86caec7eeb4c6ff42feb",
+          "confidence": "observed",
+          "authority": "historical-reference-anchors"
+        },
+        {
+          "operation": "inspect_artifact",
+          "artifact": "_releases/numbat_0.3.0_windows_amd64.zip",
+          "sha256": "a0880db223f78b0822dadad395c2e451cc7ed3bd32898ea5aaab243e7a092675",
+          "evidence_id": "ev_79ba715beaa3c17d6d5cf2550a2723cd63a0a2aa58f6ef446b244ee509367e50",
+          "confidence": "observed"
+        },
+        {
+          "operation": "inspect_go_binary",
+          "artifact": "_releases/numbat_win64/numbat.exe",
+          "sha256": "dd76d972af67b73530c57ad6a7c2e0663e986e16c008cfb051b6e184f0e79597",
+          "evidence_id": "ev_3d79a11b6aea9b874c79398afc7426b282e278886657e85c2fea69f1341bb436",
+          "confidence": "observed",
+          "go_version": "go1.26.9",
+          "dependency_count": 13
+        },
+        {
+          "operation": "inspect_pe_resources",
+          "artifact": "_releases/numbat_win64/numbat.exe",
+          "evidence_id": "ev_c6a538a4f3c9d504e6168ef31513ad5b78f870aab099648fdd0ea6a28eb1eee6",
+          "confidence": "observed"
+        }
+      ]
+    },
+    {
+      "repo": "perplexityai/rules_web_e2e",
+      "slug": "rules_web_e2e",
+      "obligation_id": "OBL-18",
+      "route": "typescript_graph_and_release_tarball",
+      "present": true,
+      "observed_anchors": {
+        "MODULE.bazel": {
+          "kind": "file",
+          "bytes": 2728,
+          "sha256": "7fd45a239b40209ad851e397a376b71d7338f1c5c1e3f1b92113965c26cdaf13"
+        },
+        "runtime/visuals.ts": {
+          "kind": "file",
+          "bytes": 8198,
+          "sha256": "ad80c2b8fd60b9bf7d99c211818ad3bd96ac7fb90cec7f5474e7c44b0d0e3b86"
+        },
+        "runtime/isolation.ts": {
+          "kind": "file",
+          "bytes": 1676,
+          "sha256": "6535da953f6b07721bb03fb2725437e2c4f08a9d833eeb60a63a985cb8cdc30c"
+        },
+        "worker/supervisor.ts": {
+          "kind": "file",
+          "bytes": 5579,
+          "sha256": "e336d1590631aa46c1378c539d72b14e55c63bd2046e35b14777decd029da140"
+        }
+      },
+      "rea_evidence": [
+        {
+          "operation": "analyze_javascript_application",
+          "evidence_id": "ev_5b859337d2c9fed8d60c06942d0944af1085e07fc57a11452decd01c0297365f",
+          "confidence": "derived",
+          "authority": "shipped-artifact",
+          "selected_sources": [
+            "package.json",
+            "runtime/visuals.ts",
+            "runtime/isolation.ts",
+            "runtime/declared-inputs-hook.ts",
+            "worker/supervisor.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "repo": "perplexityai/perplexity-py",
+      "slug": "perplexity-py",
+      "obligation_id": "OBL-19",
+      "route": "stainless_sdk_wire_contract",
+      "present": true,
+      "observed_anchors": {
+        ".stats.yml": {
+          "kind": "file",
+          "bytes": 298,
+          "sha256": "2a3271002e1502ec42b3277f0d08424df1177c6d1fb51958383082ed4bd18694"
+        },
+        "api.md": {
+          "kind": "file",
+          "bytes": 7944,
+          "sha256": "5c322393ead534367b9fd3aaba15f70e8db798e79531e0004b95651d9d224914"
+        },
+        "src/perplexity/resources/browser/sessions.py": {
+          "kind": "file",
+          "bytes": 790,
+          "sha256": "925eecd804bd582778ba010db610f836b8eb6925da2e355a5173bcc99d8145a6"
+        },
+        "src/perplexity/resources/skills/skills.py": {
+          "kind": "file",
+          "bytes": 622,
+          "sha256": "720f20eb019a0c2acb88a1ab2ef756b71e7d8a06f014a3910e2b5e8f85413f87"
+        }
+      },
+      "rea_evidence": [
+        {
+          "operation": "inspect_artifact",
+          "artifact": "perplexity-py_reference_anchors.zip",
+          "evidence_id": "ev_6587202628a424c1c483dc1c10d5774b597f6d4df3149157cc775f5abed5b28e",
+          "confidence": "observed",
+          "authority": "historical-reference-anchors"
+        }
+      ]
+    },
+    {
+      "repo": "perplexityai/search_evals",
+      "slug": "search_evals",
+      "obligation_id": "OBL-20",
+      "route": "eval_control_plane_and_cost_ledger",
+      "present": true,
+      "observed_anchors": {
+        "systems.toml": {
+          "kind": "file",
+          "bytes": 943,
+          "sha256": "752828cd3365d37fa506dccb3ce75395562037e8823ff4d8d3594373e04bde96"
+        },
+        "search_evals/costs.py": {
+          "kind": "file",
+          "bytes": 5197,
+          "sha256": "1beaf08f62ff4cebcf04f22fac43ce4f8475803cb2667191d7ade1914b665758"
+        },
+        "search_evals/runner.py": {
+          "kind": "file",
+          "bytes": 19347,
+          "sha256": "066311e9b9d9fe8aed6b0f9622384cff4667fa1e1016732c970230ee4633ce0c"
+        },
+        "search_evals/suites/graders.py": {
+          "kind": "file",
+          "bytes": 7717,
+          "sha256": "9b28d583a59a71bf89ded4e6e2cca2fe55962d2c1d495e0d885a610a9d22920a"
+        }
+      },
+      "rea_evidence": [
+        {
+          "operation": "inspect_artifact",
+          "artifact": "search_evals_reference_anchors.zip",
+          "evidence_id": "ev_5e7f00cd34b44227327c372623302a48dc3838ca8123647a0ddf1c03e3de2bd4",
+          "confidence": "observed",
+          "authority": "historical-reference-anchors"
+        }
+      ]
+    },
+    {
+      "repo": "perplexityai/pplx-kernels",
+      "slug": "pplx-kernels",
+      "obligation_id": "OBL-21",
+      "route": "cuda_nvshmem_all_to_all_topology",
+      "present": true,
+      "observed_anchors": {
+        "src/pplx_kernels/all_to_all.py": {
+          "kind": "file",
+          "bytes": 4166,
+          "sha256": "eaaea6018383118aef61bff5deab7f43565a1daf60533472f5d2738ac9686721"
+        },
+        "csrc/all_to_all/intranode_dispatch.cu": {
+          "kind": "file",
+          "bytes": 13970,
+          "sha256": "76e5980e630b3fe530155858d0628a554dd9fbf85d0ab8008b534ec3da4f4f3f"
+        },
+        "csrc/all_to_all/internode_dispatch.cu": {
+          "kind": "file",
+          "bytes": 13204,
+          "sha256": "0c4fb9409b0c29b6dfd0210c17b6fff714955261318c8f4455e423974a827f75"
+        },
+        "csrc/core/atomic.cuh": {
+          "kind": "file",
+          "bytes": 1055,
+          "sha256": "e6f78fdb0fbeea1e822fa4108223a714258daf9e42517a695737e1736f662fd8"
+        }
+      },
+      "rea_evidence": [
+        {
+          "operation": "inspect_artifact",
+          "artifact": "pplx-kernels_reference_anchors.zip",
+          "evidence_id": "ev_3c5a35ebe1ae6e724a905b2f546942517771565e06f04be19882f7d82d8825f9",
+          "confidence": "observed",
+          "authority": "historical-reference-anchors"
+        }
+      ]
+    }
+  ],
+  "residual_unknowns": [
+    {
+      "id": "RU-REF-SPACE",
+      "target": "perplexityai/SPACE",
+      "confidence": "unknown",
+      "reason": "Safe no-follow file opens are unavailable Safe no-follow file opens are unavailable on this host. Import the source tree with REA on Linux (including WSL) or macOS.",
+      "authority_required": "Host filesystem without symlink/reparse barriers for REA reference import"
+    },
+    {
+      "id": "RU-REF-CODESCYTHE",
+      "target": "perplexityai/codescythe",
+      "confidence": "unknown",
+      "reason": "Safe no-follow file opens are unavailable Safe no-follow file opens are unavailable on this host. Import the source tree with REA on Linux (including WSL) or macOS.",
+      "authority_required": "Host filesystem without symlink/reparse barriers for REA reference import"
+    },
+    {
+      "id": "RU-ELF-CODESCYTHE",
+      "target": "perplexityai/codescythe",
+      "confidence": "unknown",
+      "reason": "The initial real-verified pwntools artifact profile supports Linux x64 only.",
+      "authority_required": "Linux x64 pwntools-elf or Ghidra 12.1.x provider"
+    },
+    {
+      "id": "RU-REF-NUMBAT",
+      "target": "perplexityai/numbat",
+      "confidence": "unknown",
+      "reason": "Safe no-follow file opens are unavailable Safe no-follow file opens are unavailable on this host. Import the source tree with REA on Linux (including WSL) or macOS.",
+      "authority_required": "Host filesystem without symlink/reparse barriers for REA reference import"
+    },
+    {
+      "id": "RU-ELF-NUMBAT",
+      "target": "perplexityai/numbat",
+      "confidence": "unknown",
+      "reason": "The initial real-verified pwntools artifact profile supports Linux x64 only.",
+      "authority_required": "Linux x64 pwntools-elf or Ghidra 12.1.x provider"
+    },
+    {
+      "id": "RU-REF-RULES_WEB_E2E",
+      "target": "perplexityai/rules_web_e2e",
+      "confidence": "unknown",
+      "reason": "Safe no-follow file opens are unavailable Safe no-follow file opens are unavailable on this host. Import the source tree with REA on Linux (including WSL) or macOS.",
+      "authority_required": "Host filesystem without symlink/reparse barriers for REA reference import"
+    },
+    {
+      "id": "RU-REF-PERPLEXITY-PY",
+      "target": "perplexityai/perplexity-py",
+      "confidence": "unknown",
+      "reason": "Safe no-follow file opens are unavailable Safe no-follow file opens are unavailable on this host. Import the source tree with REA on Linux (including WSL) or macOS.",
+      "authority_required": "Host filesystem without symlink/reparse barriers for REA reference import"
+    },
+    {
+      "id": "RU-REF-SEARCH_EVALS",
+      "target": "perplexityai/search_evals",
+      "confidence": "unknown",
+      "reason": "Safe no-follow file opens are unavailable Safe no-follow file opens are unavailable on this host. Import the source tree with REA on Linux (including WSL) or macOS.",
+      "authority_required": "Host filesystem without symlink/reparse barriers for REA reference import"
+    },
+    {
+      "id": "RU-REF-PPLX-KERNELS",
+      "target": "perplexityai/pplx-kernels",
+      "confidence": "unknown",
+      "reason": "Safe no-follow file opens are unavailable Safe no-follow file opens are unavailable on this host. Import the source tree with REA on Linux (including WSL) or macOS.",
+      "authority_required": "Host filesystem without symlink/reparse barriers for REA reference import"
+    },
+    {
+      "id": "RU-PPLX-OPENAPI-BUCKET",
+      "target": "perplexityai/perplexity-py",
+      "confidence": "unknown",
+      "reason": "Upstream .stats.yml GCS bucket (stainless-sdk-openapi-specs) is non-public (NoSuchBucket); local api.md and generated/api.py provide observed SDK ground truth.",
+      "authority_required": "Perplexity internal Stainless OpenAPI bucket access"
+    },
+    {
+      "id": "RU-PPLX-CUDA-SASS",
+      "target": "perplexityai/pplx-kernels",
+      "confidence": "unknown",
+      "reason": "Device .nv_fatbin SASS/PTX instructions are not compiled or decompiled on non-CUDA Windows hosts; host C++/Python dispatch/combine invariants are statically verified.",
+      "authority_required": "Linux CUDA + NVSHMEM build host with nvdisasm / Ghidra"
+    }
+  ]
+}

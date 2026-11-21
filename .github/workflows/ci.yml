@@ -26,8 +26,8 @@ jobs:
           import subprocess, sys
           from pathlib import Path
           blocked_exts = {".zip", ".7z", ".exe", ".msi", ".dll", ".pdb", ".crx", ".pak", ".tar", ".gz", ".tgz", ".xz", ".bz2", ".pem", ".key"}
-          blocked_names = {".env", "vault.json", "vault.key.json", "local_ui_key.txt", "action_ledger.jsonl", "knowledge_graph.sqlite3", "luminara_memory.sqlite3", "active_handoffs.json"}
-          blocked_suffixes = (".sqlite3-wal", ".sqlite3-shm", ".key.json")
+          blocked_names = {".env", "vault.json", "vault.key.json", "local_ui_key.txt", "action_ledger.jsonl", "knowledge_graph.sqlite3", "monitors_eval.sqlite3", "luminara_memory.sqlite3", "active_handoffs.json", "scheduled_tasks.json", "sequence_guard_state.json", "latest_genui.json"}
+          blocked_suffixes = (".sqlite3", ".sqlite3-wal", ".sqlite3-shm", ".key.json")
           files = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
           bad = []
           for rel in files:
@@ -47,15 +47,19 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install package, audit patches & run static REA + 100x benchmarks
+      - name: Install non-editable wheel, audit patches & run static REA + 100x benchmarks
         shell: bash
         run: |
-          python -m pip install -e .
+          python -m pip install --upgrade "setuptools>=77.0" wheel
+          python -m pip install --no-build-isolation .
+          luminara-forge verify-arch
           luminara-forge audit-patches
           luminara-forge compile-overlay
           luminara-forge verify-upstream-patches
           luminara-forge verify-rea --static-only
           luminara-forge benchmark-100x
+          mkdir -p "$RUNNER_TEMP/lum-standalone"
+          (cd "$RUNNER_TEMP/lum-standalone" && luminara-forge --forge-root "$RUNNER_TEMP/lum-standalone" init && luminara-forge --forge-root "$RUNNER_TEMP/lum-standalone" verify-arch && luminara-forge --forge-root "$RUNNER_TEMP/lum-standalone" --core-repo "$GITHUB_WORKSPACE/ungoogled-chromium" --windows-repo "$GITHUB_WORKSPACE/ungoogled-chromium-windows" verify-rea --static-only && luminara-forge --forge-root "$RUNNER_TEMP/lum-standalone" verify-upstream-patches)
 
       - name: Run strict unit, security & A/B test suite
         working-directory: chromium-forge

@@ -24,7 +24,7 @@ from .luminara_security import DEFAULT_REDACTOR, LuminaraRedactor
 
 MUTATING_HTTP_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _HIGH_RISK_PATH_RE = re.compile(
-    r"(?i)/(?:delete|remove|destroy|drop|checkout|pay|payment|billing|charge|transfer|wire|order|confirm|reset|admin|settings/security|oauth|token)\b"
+    r"(?i)/(?:delete|remove|destroy|drop|checkout|pay|payment|billing|charge|transfer|wire|order|confirm|reset|admin|settings/security|oauth|token)(?=$|[^a-z0-9])"
 )
 
 
@@ -55,7 +55,10 @@ class NetworkMutationFirewall:
         self._guarded_targets: set[str] = set()
         self._pending: dict[str, dict[str, Any]] = {}
         self._history: list[dict[str, Any]] = []
-        self._unsub = self.cdp.mux.subscribe("Fetch.requestPaused", self._on_request_paused)
+        if hasattr(self.cdp, "register_fetch_hook"):
+            self._unsub = self.cdp.register_fetch_hook(20, "mutation_firewall", self._evaluate_fetch_hook)
+        else:
+            self._unsub = self.cdp.mux.subscribe("Fetch.requestPaused", self._on_request_paused)
         self._unsub_detach = self.cdp.mux.subscribe("Target.detachedFromTarget", self._on_target_detached)
 
     def close(self) -> None:
@@ -85,10 +88,13 @@ class NetworkMutationFirewall:
         tid = self.cdp._pick_target_id(target_id)
         with self._lock:
             self._guarded_targets.add(tid)
-        self.cdp.run_session(
-            tid,
-            [("Fetch.enable", {"patterns": [{"urlPattern": url_pattern, "requestStage": "Request"}]})],
-        )
+        if hasattr(self.cdp, "set_fetch_interception"):
+            self.cdp.set_fetch_interception(tid, "mutation_firewall", enabled=True, url_pattern=url_pattern)
+        else:
+            self.cdp.run_session(
+                tid,
+                [("Fetch.enable", {"patterns": [{"urlPattern": url_pattern, "requestStage": "Request"}]})],
+            )
         return {"ok": True, "target_id": tid, "guard_enabled": True, "url_pattern": url_pattern}
 
     def disable_guard(self, target_id: str | None = None) -> dict[str, Any]:
@@ -96,13 +102,17 @@ class NetworkMutationFirewall:
         with self._lock:
             self._guarded_targets.discard(tid)
         self._evict_target_pending(tid)
-        try:
-            self.cdp.run_session(tid, [("Fetch.disable", {})])
-        except Exception:  # noqa: BLE001
-            pass
+        if hasattr(self.cdp, "set_fetch_interception"):
+            self.cdp.set_fetch_interception(tid, "mutation_firewall", enabled=False)
+        else:
+            try:
+                self.cdp.run_session(tid, [("Fetch.disable", {})])
+            except Exception:  # noqa: BLE001
+                pass
         return {"ok": True, "target_id": tid, "guard_enabled": False}
 
-    def _on_request_paused(self, event: dict[str, Any]) -> None:
+    def _evaluate_fetch_hook(self, event: dict[str, Any]) -> str | None:
+        """Priority-20 hook on `CDPBridge`: pauses mutating HTTP requests on guarded tabs."""
         params = event.get("params") or {}
         session_id = str(event.get("session_id") or "")
         target_id = str(event.get("target_id") or "")
@@ -111,17 +121,25 @@ class NetworkMutationFirewall:
         method = str(req.get("method") or "GET").upper()
         url = str(req.get("url") or "")
 
+        is_response_stage = ("responseStatusCode" in params) or ("responseErrorReason" in params)
         with self._lock:
-            is_guarded = not target_id or (target_id in self._guarded_targets)
+            is_guarded = bool(target_id and (target_id in self._guarded_targets))
 
-        if (not is_guarded) or (method not in MUTATING_HTTP_METHODS):
-            # Non-mutating reads and unguarded tabs continue inline in O(1) with zero spawned threads!
-            if session_id and request_id:
-                try:
-                    self.cdp.mux.send_command_async("Fetch.continueRequest", {"requestId": request_id}, session_id=session_id)
-                except Exception:  # noqa: BLE001
-                    pass
-            return
+        if is_response_stage or (not is_guarded) or (method not in MUTATING_HTTP_METHODS):
+            return None
+
+        raw_post = str(req.get("postData") or "")
+        if not raw_post and isinstance(req.get("postDataEntries"), list):
+            import base64
+
+            parts_b: list[str] = []
+            for entry_p in req["postDataEntries"][:8]:
+                if isinstance(entry_p, dict) and isinstance(entry_p.get("bytes"), str):
+                    try:
+                        parts_b.append(base64.b64decode(entry_p["bytes"]).decode("utf-8", errors="replace"))
+                    except Exception:  # noqa: BLE001
+                        pass
+            raw_post = "".join(parts_b)
 
         self.record_intercepted_mutation(
             request_id=request_id,
@@ -130,8 +148,20 @@ class NetworkMutationFirewall:
             method=method,
             url=url,
             headers=req.get("headers") if isinstance(req.get("headers"), dict) else {},
-            post_data=str(req.get("postData") or ""),
+            post_data=raw_post,
         )
+        return "PAUSE"
+
+    def _on_request_paused(self, event: dict[str, Any]) -> None:
+        params = event.get("params") or {}
+        session_id = str(event.get("session_id") or "")
+        request_id = str(params.get("requestId") or "")
+        verdict = self._evaluate_fetch_hook(event)
+        if verdict != "PAUSE" and session_id and request_id:
+            try:
+                self.cdp.mux.send_command_async("Fetch.continueRequest", {"requestId": request_id}, session_id=session_id)
+            except Exception:  # noqa: BLE001
+                pass
 
     def _sweep_expired(self) -> None:
         cutoff_ms = int(time.time() * 1000) - PENDING_TTL_MS
@@ -243,9 +273,14 @@ class NetworkMutationFirewall:
             except Exception as exc:  # noqa: BLE001
                 cdp_error = str(exc)
 
+        resolved_status = (
+            ("APPROVED" if norm == "approve" else "REJECTED")
+            if (not session_id or not request_id or cdp_dispatched)
+            else "TARGET_CLOSED"
+        )
         resolved = {
             **self._public_view(entry),
-            "status": "APPROVED" if norm == "approve" else "REJECTED",
+            "status": resolved_status,
             "resolved_at_ms": int(time.time() * 1000),
             "cdp_dispatched": cdp_dispatched,
             **({"cdp_error": cdp_error} if cdp_error else {}),

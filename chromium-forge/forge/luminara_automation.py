@@ -21,6 +21,7 @@ import json
 from pathlib import Path
 import re
 import secrets
+import sys
 import threading
 import time
 from typing import Any
@@ -28,8 +29,8 @@ import urllib.parse
 
 from .cdp_client import CDPBridge, CDPError
 from .extractor import build_dom_action_js, build_dom_snapshot_js
-from .http_base import safe_join
-from .luminara_security import atomic_write_private
+from .http_base import atomic_write_private, safe_join
+from .luminara_security import DEFAULT_REDACTOR
 
 ENCODING = "utf-8"
 MAX_SANDBOX_RANGE = 1000
@@ -113,7 +114,7 @@ def _extract_domain_key(url: str) -> str:
 def _goal_tokens(goal: str) -> set[str]:
     return {
         tok
-        for tok in re.findall(r"[a-z0-9]{3,}", (goal or "").lower())
+        for tok in re.findall(r"[a-z0-9]{2,}|[\u0080-\uffff]+", (goal or "").lower())
         if tok not in _GOAL_STOPWORDS
     }
 
@@ -155,17 +156,29 @@ class PlaybookMemory:
         snapshot_elements: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any] | None:
         """Distill a completed multi-step run into an origin/domain-keyed playbook."""
-        actionable = [s for s in steps if s.get("action") in ("navigate", "type", "click", "scroll", "select")]
+        actionable = [
+            s
+            for s in steps
+            if s.get("action") in ("navigate", "type", "click", "scroll", "select")
+            and not (isinstance(s.get("result"), dict) and s["result"].get("ok") is False)
+            and (s.get("action") != "navigate" or str(s.get("url") or "").strip())
+        ]
         if not actionable:
             return None
 
         domain_key = _extract_domain_key(url)
         el_by_idx = {int(e["index"]): e for e in (snapshot_elements or []) if "index" in e}
+        last_nav_pos = max((i for i, st in enumerate(actionable) if st.get("action") == "navigate"), default=-1)
 
         distilled_steps: list[dict[str, Any]] = []
-        for s in actionable[:15]:
+        for pos, s in enumerate(actionable[:15]):
             idx = s.get("index")
-            fallback_el = el_by_idx.get(int(idx)) if idx is not None and str(idx).isdigit() else None
+            use_final_snap = (pos > last_nav_pos) and not s.get("selector") and not s.get("tag")
+            fallback_el = (
+                el_by_idx.get(int(idx))
+                if use_final_snap and idx is not None and str(idx).isdigit()
+                else None
+            )
             step_spec: dict[str, Any] = {
                 "action": s["action"],
                 "index": idx,
@@ -178,11 +191,35 @@ class PlaybookMemory:
             }
             distilled_steps.append(step_spec)
 
-        tokens = sorted(_goal_tokens(goal))
-        pb_id_seed = f"{domain_key}:{'-'.join(tokens[:8])}:{len(distilled_steps)}"
+        scrubbed_steps = DEFAULT_REDACTOR.redact_payload(distilled_steps)
+        scrubbed_goal = DEFAULT_REDACTOR.redact_text(goal[:180])
+        tokens = sorted(_goal_tokens(scrubbed_goal))
+        pb_id_seed = f"{domain_key}:{'-'.join(tokens[:8])}"
         playbook_id = "pb_" + hashlib.sha256(pb_id_seed.encode(ENCODING)).hexdigest()[:12]
-        digest = _compute_playbook_sha256(distilled_steps)
+        return self.put_playbook(
+            playbook_id,
+            domain=domain_key,
+            goal=scrubbed_goal,
+            steps=scrubbed_steps,
+            increment_success=True,
+        )
 
+    def put_playbook(
+        self,
+        playbook_id: str,
+        *,
+        domain: str = "local",
+        goal: str = "",
+        steps: list[dict[str, Any]],
+        increment_success: bool = False,
+    ) -> dict[str, Any]:
+        """Atomically persist or restore a SHA-256 verified playbook entry on disk."""
+        pid = (playbook_id or "").strip()
+        if not pid:
+            raise ValueError("playbook_id must be non-empty")
+        domain_key = _extract_domain_key(domain) if ("://" in domain or "/" in domain) else (_DOMAIN_SLUG_RE.sub("_", (domain or "local").lower()).strip("._-") or "local")[:64]
+        scrubbed_steps = DEFAULT_REDACTOR.redact_payload(steps)
+        digest = _compute_playbook_sha256(scrubbed_steps)
         with self._lock:
             path = self._domain_file(domain_key)
             store: dict[str, Any] = {"domain": domain_key, "playbooks": {}}
@@ -193,19 +230,21 @@ class PlaybookMemory:
                         store = loaded
                 except Exception:  # noqa: BLE001
                     pass
-
-            existing = store["playbooks"].get(playbook_id, {})
+            existing = store["playbooks"].get(pid, {})
+            scrubbed_goal = DEFAULT_REDACTOR.redact_text((goal or str(existing.get("goal_example") or ""))[:180])
+            tokens = sorted(_goal_tokens(scrubbed_goal)) or list(existing.get("goal_tokens") or [])
+            prev_count = int(existing.get("success_count", 0))
             record = {
-                "playbook_id": playbook_id,
+                "playbook_id": pid,
                 "domain": domain_key,
-                "goal_example": goal[:180],
+                "goal_example": scrubbed_goal,
                 "goal_tokens": tokens,
-                "steps": distilled_steps,
+                "steps": scrubbed_steps,
                 "sha256": digest,
-                "success_count": int(existing.get("success_count", 0)) + 1,
+                "success_count": prev_count + 1 if increment_success else max(1, prev_count),
                 "last_verified_ms": int(time.time() * 1000),
             }
-            store["playbooks"][playbook_id] = record
+            store["playbooks"][pid] = record
             atomic_write_private(path, json.dumps(store, indent=2, ensure_ascii=False) + "\n")
             return record
 
@@ -238,7 +277,7 @@ class PlaybookMemory:
             candidates = self.list_playbooks()
 
         best_pb: dict[str, Any] | None = None
-        best_score = 0.0
+        best_rank: tuple[float, int, int] = (0.0, 0, 0)
         for pb in candidates:
             if not isinstance(pb, dict) or not self.verify_entry(pb):
                 continue
@@ -247,8 +286,9 @@ class PlaybookMemory:
                 continue
             union_len = len(target_tokens | pb_tokens)
             score = len(target_tokens & pb_tokens) / union_len if union_len else 0.0
-            if score >= min_overlap and score > best_score:
-                best_score = score
+            cand_rank = (score, int(pb.get("last_verified_ms") or 0), int(pb.get("success_count") or 0))
+            if score >= min_overlap and cand_rank > best_rank:
+                best_rank = cand_rank
                 best_pb = pb
         return best_pb
 
@@ -291,106 +331,121 @@ class PlaybookMemory:
             raise ValueError(f"Playbook {playbook.get('playbook_id')!r} failed SHA-256 integrity verification")
 
         resolved_tid = cdp._pick_target_id(target_id)
-        cdp.leases.check_allowed(resolved_tid, agent_id)
+        already_owned = (cdp.leases.get_active(resolved_tid) or {}).get("agent_id") == agent_id
+        if not already_owned:
+            cdp.leases.acquire(resolved_tid, agent_id=agent_id, ttl_sec=60.0, purpose=f"playbook:{playbook.get('playbook_id', '')}")
         executed_steps: list[dict[str, Any]] = []
 
-        for seq, step in enumerate(playbook.get("steps", []), start=1):
-            snap = cdp.evaluate_js(resolved_tid, build_dom_snapshot_js(show_badges=True, agent_label=agent_id))
-            if not isinstance(snap, dict):
-                raise CDPError("Empty DOM snapshot during playbook replay")
-            gate = snap.get("gate_detected")
-            if gate:
-                return {
-                    "ok": True,
-                    "status": "PAUSED_HUMAN_HANDOFF",
-                    "gate_type": gate,
-                    "target_id": resolved_tid,
-                    "url": snap.get("url", ""),
-                    "playbook_id": playbook["playbook_id"],
-                    "steps": executed_steps,
-                }
-
-            act = str(step.get("action") or "")
-            if act == "navigate" and step.get("url"):
-                nav_url = str(step["url"]).strip()
-                cdp.navigate(resolved_tid, nav_url, settle_sec=0.5, allow_file=allow_file and nav_url.lower().startswith("file:///"))
-                exec_res: dict[str, Any] = {"ok": True, "url": nav_url}
-                resolved_idx = None
-                resolved_sel = ""
-            elif act == "scroll":
-                exec_res = cdp.evaluate_js(resolved_tid, build_dom_action_js("scroll")) or {"ok": True}
-                resolved_idx = None
-                resolved_sel = ""
-                time.sleep(0.2)
-            elif act in ("click", "type", "select"):
-                matched_el = self._resolve_live_target(step, snap.get("elements", []))
-                if matched_el is None and not step.get("selector"):
+        try:
+            for seq, step in enumerate(playbook.get("steps", []), start=1):
+                cur_lease = cdp.leases.get_active(resolved_tid)
+                if cur_lease is None or cur_lease.get("agent_id") != agent_id:
                     return {
                         "ok": False,
-                        "status": "DOM_DRIFT",
-                        "reason": f"Element for step #{seq} ({act}) not found in live DOM",
+                        "status": "PREEMPTED_BY_HUMAN",
                         "target_id": resolved_tid,
                         "playbook_id": playbook["playbook_id"],
                         "steps": executed_steps,
                     }
-                resolved_idx = int(matched_el["index"]) if matched_el is not None else None
-                resolved_sel = str(matched_el.get("selector") if matched_el is not None else step.get("selector") or "")
-                exec_res = (
-                    cdp.evaluate_js(
-                        resolved_tid,
-                        build_dom_action_js(
-                            act,
-                            index=resolved_idx,
-                            selector=resolved_sel if resolved_idx is None else None,
-                            text=str(step.get("text") or ""),
-                        ),
+                snap = cdp.evaluate_js(resolved_tid, build_dom_snapshot_js(show_badges=True, agent_label=agent_id))
+                if not isinstance(snap, dict):
+                    raise CDPError("Empty DOM snapshot during playbook replay")
+                gate = snap.get("gate_detected")
+                if gate:
+                    return {
+                        "ok": True,
+                        "status": "PAUSED_HUMAN_HANDOFF",
+                        "gate_type": gate,
+                        "target_id": resolved_tid,
+                        "url": snap.get("url", ""),
+                        "playbook_id": playbook["playbook_id"],
+                        "steps": executed_steps,
+                    }
+
+                act = str(step.get("action") or "")
+                if act == "navigate" and step.get("url"):
+                    nav_url = str(step["url"]).strip()
+                    cdp.navigate(resolved_tid, nav_url, settle_sec=0.5, allow_file=allow_file and nav_url.lower().startswith("file:///"))
+                    exec_res: dict[str, Any] = {"ok": True, "url": nav_url}
+                    resolved_idx = None
+                    resolved_sel = ""
+                elif act == "scroll":
+                    exec_res = cdp.evaluate_js(resolved_tid, build_dom_action_js("scroll")) or {"ok": True}
+                    resolved_idx = None
+                    resolved_sel = ""
+                    time.sleep(0.2)
+                elif act in ("click", "type", "select"):
+                    matched_el = self._resolve_live_target(step, snap.get("elements", []))
+                    if matched_el is None and not step.get("selector"):
+                        return {
+                            "ok": False,
+                            "status": "DOM_DRIFT",
+                            "reason": f"Element for step #{seq} ({act}) not found in live DOM",
+                            "target_id": resolved_tid,
+                            "playbook_id": playbook["playbook_id"],
+                            "steps": executed_steps,
+                        }
+                    resolved_idx = int(matched_el["index"]) if matched_el is not None else None
+                    resolved_sel = str(matched_el.get("selector") if matched_el is not None else step.get("selector") or "")
+                    exec_res = (
+                        cdp.evaluate_js(
+                            resolved_tid,
+                            build_dom_action_js(
+                                act,
+                                index=resolved_idx,
+                                selector=resolved_sel if resolved_idx is None else None,
+                                text=str(step.get("text") or ""),
+                            ),
+                        )
+                        or {}
                     )
-                    or {}
+                    if not exec_res.get("ok"):
+                        return {
+                            "ok": False,
+                            "status": "DOM_DRIFT",
+                            "reason": str(exec_res.get("error") or f"Step #{seq} failed"),
+                            "target_id": resolved_tid,
+                            "playbook_id": playbook["playbook_id"],
+                            "steps": executed_steps,
+                        }
+                    time.sleep(0.25)
+                else:
+                    continue
+
+                rec = ledger.record(
+                    agent_id=agent_id,
+                    action=f"playbook_{act}",
+                    target_id=resolved_tid,
+                    params={"playbook_id": playbook["playbook_id"], "step": seq, "index": resolved_idx},
+                    status="OK",
+                    summary=f"Replayed {playbook['playbook_id']} step #{seq} ({act})",
                 )
-                if not exec_res.get("ok"):
-                    return {
-                        "ok": False,
-                        "status": "DOM_DRIFT",
-                        "reason": str(exec_res.get("error") or f"Step #{seq} failed"),
-                        "target_id": resolved_tid,
-                        "playbook_id": playbook["playbook_id"],
-                        "steps": executed_steps,
+                executed_steps.append(
+                    {
+                        "step": seq,
+                        "action": act,
+                        "index": resolved_idx,
+                        "selector": resolved_sel,
+                        "tag": step.get("tag", ""),
+                        "target_text": step.get("target_text", ""),
+                        "text": step.get("text", ""),
+                        "url": step.get("url", ""),
+                        "reason": step.get("reason", "Playbook replay"),
+                        "result": exec_res,
+                        "receipt_id": rec["receipt_id"],
                     }
-                time.sleep(0.25)
-            else:
-                continue
+                )
 
-            rec = ledger.record(
-                agent_id=agent_id,
-                action=f"playbook_{act}",
-                target_id=resolved_tid,
-                params={"playbook_id": playbook["playbook_id"], "step": seq, "index": resolved_idx},
-                status="OK",
-                summary=f"Replayed {playbook['playbook_id']} step #{seq} ({act})",
-            )
-            executed_steps.append(
-                {
-                    "step": seq,
-                    "action": act,
-                    "index": resolved_idx,
-                    "selector": resolved_sel,
-                    "tag": step.get("tag", ""),
-                    "target_text": step.get("target_text", ""),
-                    "text": step.get("text", ""),
-                    "url": step.get("url", ""),
-                    "reason": step.get("reason", "Playbook replay"),
-                    "result": exec_res,
-                    "receipt_id": rec["receipt_id"],
-                }
-            )
-
-        return {
-            "ok": True,
-            "status": "COMPLETED",
-            "target_id": resolved_tid,
-            "playbook_id": playbook["playbook_id"],
-            "steps": executed_steps,
-        }
+            return {
+                "ok": True,
+                "status": "COMPLETED",
+                "target_id": resolved_tid,
+                "playbook_id": playbook["playbook_id"],
+                "steps": executed_steps,
+            }
+        finally:
+            if not already_owned:
+                cdp.leases.release(resolved_tid, agent_id)
 
     def list_playbooks(self, domain: str | None = None) -> list[dict[str, Any]]:
         with self._lock:
@@ -429,11 +484,12 @@ class PlaybookMemory:
 
 
 class _PipelineGatePause(Exception):
-    """Internal control-flow signal raised when any sandboxed step hits a HITL gate."""
+    """Internal control-flow signal raised when any sandboxed step hits a HITL or security gate."""
 
-    def __init__(self, gate_type: str) -> None:
+    def __init__(self, gate_type: str, *, status: str = "PAUSED_HUMAN_HANDOFF") -> None:
         super().__init__(gate_type)
         self.gate_type = gate_type
+        self.status = status
 
 
 _DISALLOWED_AST_NODES = (
@@ -442,6 +498,8 @@ _DISALLOWED_AST_NODES = (
     ast.ImportFrom,
     ast.With,
     ast.AsyncWith,
+    ast.AsyncFor,
+    ast.Await,
     ast.FunctionDef,
     ast.AsyncFunctionDef,
     ast.ClassDef,
@@ -454,10 +512,24 @@ _DISALLOWED_AST_NODES = (
     ast.YieldFrom,
     ast.Lambda,
     ast.While,
+    ast.Match,
 )
 
-_DISALLOWED_BINOPS = (ast.Pow, ast.LShift, ast.RShift)
-_FORBIDDEN_ATTR_NAMES = frozenset({"format", "format_map"})
+_DISALLOWED_BINOPS = (ast.Pow, ast.LShift, ast.RShift, ast.Mod)
+_FORBIDDEN_ATTR_NAMES = frozenset({"format", "format_map", "zfill", "ljust", "rjust", "center", "encode", "replace", "join"})
+_LOOP_OR_COMP_NODES = (ast.For, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+
+def _check_loop_nesting(node: ast.AST, depth: int = 0) -> None:
+    next_depth = depth + (
+        len(node.generators)
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp))
+        else (1 if isinstance(node, ast.For) else 0)
+    )
+    if next_depth > 2:
+        raise ValueError("Loop / comprehension nesting exceeds maximum depth of 2")
+    for child in ast.iter_child_nodes(node):
+        _check_loop_nesting(child, next_depth)
 
 
 def _bounded_range(*args: int) -> range:
@@ -495,8 +567,25 @@ _SAFE_BUILTINS: dict[str, Any] = {
 }
 
 _ALLOWED_RPC_METHODS = frozenset(
-    {"open_tab", "close_tab", "snapshot", "act", "extract", "generative_ui", "dialog", "wait", "emit"}
+    {
+        "open_tab",
+        "close_tab",
+        "snapshot",
+        "act",
+        "extract",
+        "generative_ui",
+        "dialog",
+        "perception",
+        "webmcp_list",
+        "webmcp_call",
+        "vault",
+        "workspace",
+        "hibernate",
+        "wait",
+        "emit",
+    }
 )
+_FMT_WIDTH_RE = re.compile(r"\d+")
 
 
 def validate_pipeline_ast(script: str, max_nodes: int = 400) -> ast.Module:
@@ -507,6 +596,7 @@ def validate_pipeline_ast(script: str, max_nodes: int = 400) -> ast.Module:
         raise ValueError("Pipeline script exceeds 16 KiB limit")
 
     tree = ast.parse(script, mode="exec")
+    _check_loop_nesting(tree)
     node_count = 0
     for node in ast.walk(tree):
         node_count += 1
@@ -530,7 +620,15 @@ def validate_pipeline_ast(script: str, max_nodes: int = 400) -> ast.Module:
         if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
             if len(node.generators) > 2:
                 raise ValueError("Comprehension nesting exceeds maximum depth of 2")
-        if isinstance(node, ast.Name) and node.id.startswith("_"):
+        if isinstance(node, ast.FormattedValue) and node.format_spec is not None:
+            for sub_node in ast.walk(node.format_spec):
+                if isinstance(sub_node, ast.FormattedValue) and sub_node is not node.format_spec:
+                    raise ValueError("Dynamic nested f-string format specifiers are forbidden in pipeline sandbox")
+                if isinstance(sub_node, ast.Constant) and isinstance(sub_node.value, str):
+                    for num_s in _FMT_WIDTH_RE.findall(sub_node.value):
+                        if int(num_s) > 64:
+                            raise ValueError("f-string format width exceeds 64-character safety limit")
+        if isinstance(node, ast.Name) and node.id.startswith("_") and node.id != "_":
             raise ValueError(f"Forbidden private/dunder identifier in pipeline sandbox: {node.id!r}")
         if isinstance(node, ast.Attribute):
             if node.attr.startswith("_") or node.attr in _FORBIDDEN_ATTR_NAMES:
@@ -539,7 +637,7 @@ def validate_pipeline_ast(script: str, max_nodes: int = 400) -> ast.Module:
 
 
 class _LuminaraRPCFacade:
-    """Zero-dict (`__slots__ = ()`) facade delegating strictly to lexical-closure callables."""
+    """Zero-dict (`__slots__`) facade delegating strictly to lexical-closure callables."""
 
     __slots__ = (
         "act",
@@ -548,9 +646,15 @@ class _LuminaraRPCFacade:
         "emit",
         "extract",
         "generative_ui",
+        "hibernate",
         "open_tab",
+        "perception",
         "snapshot",
+        "vault",
         "wait",
+        "webmcp_call",
+        "webmcp_list",
+        "workspace",
     )
 
     def __init__(self, methods: dict[str, Callable[..., Any]]) -> None:
@@ -598,6 +702,9 @@ def _build_closure_rpc(
         if isinstance(res, dict) and res.get("status") == "PAUSED_HUMAN_HANDOFF":
             emitted.append(res)
             raise _PipelineGatePause(str(res.get("gate_type") or "login_or_mfa_wall"))
+        if isinstance(res, dict) and (res.get("status") == "PAUSED_SEQUENCE_BLOCK" or res.get("blocked") is True):
+            emitted.append(res)
+            raise _PipelineGatePause("sequence_guard_block", status="PAUSED_SEQUENCE_BLOCK")
         return res
 
     def open_tab(url: str, background: bool = True) -> dict[str, Any]:
@@ -616,14 +723,16 @@ def _build_closure_rpc(
 
     def act(
         action: str,
+        index: int | None = None,
+        text: str = "",
         *,
         target_id: str | None = None,
-        index: int | None = None,
         selector: str | None = None,
-        text: str = "",
         url: str = "",
         frame_id: str | None = None,
     ) -> dict[str, Any]:
+        if action == "human_takeover":
+            raise PermissionError("browser_act human_takeover requires human UI authorization (X-Luminara-UI-Key)")
         payload: dict[str, Any] = {"action": action, "text": text, "url": url}
         if target_id:
             payload["target_id"] = target_id
@@ -655,12 +764,73 @@ def _build_closure_rpc(
             payload["dialog_id"] = dialog_id
         return _invoke(rpc_token, "browser_dialog", payload)
 
+    def perception(
+        action: str = "snapshot",
+        *,
+        target_id: str | None = None,
+        backend_node_id: int | None = None,
+        x: float | None = None,
+        y: float | None = None,
+        text: str = "",
+        press_enter: bool = False,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"action": action, "text": text, "press_enter": press_enter}
+        if target_id:
+            payload["target_id"] = target_id
+        if backend_node_id is not None:
+            payload["backend_node_id"] = int(backend_node_id)
+        if x is not None and y is not None:
+            payload["x"] = float(x)
+            payload["y"] = float(y)
+        return _invoke(rpc_token, "browser_perception_axtree", payload)
+
+    def webmcp_list(target_id: str | None = None) -> dict[str, Any]:
+        return _invoke(rpc_token, "webmcp_list_tools", {"target_id": target_id} if target_id else {})
+
+    def webmcp_call(tool_name: str, arguments: dict[str, Any] | None = None, *, target_id: str | None = None, auto_submit: bool = True) -> dict[str, Any]:
+        payload: dict[str, Any] = {"tool_name": tool_name, "arguments": arguments or {}, "auto_submit": auto_submit}
+        if target_id:
+            payload["target_id"] = target_id
+        return _invoke(rpc_token, "webmcp_call_tool", payload)
+
+    def vault(action: str = "list", vault_id: str | None = None, *, target_id: str | None = None, origin: str | None = None) -> dict[str, Any]:
+        if action not in ("list", "fill", "enter_totp"):
+            raise ValueError("Pipeline vault helper permits only model-blind list, fill, or enter_totp")
+        payload: dict[str, Any] = {"action": action}
+        if vault_id:
+            payload["vault_id"] = vault_id
+        if target_id:
+            payload["target_id"] = target_id
+        if origin:
+            payload["origin"] = origin
+        return _invoke(rpc_token, "browser_vault", payload)
+
+    def workspace(action: str = "list", *, workspace_id: str | None = None, query: str = "", limit: int = 25) -> dict[str, Any]:
+        payload: dict[str, Any] = {"action": action, "query": query, "limit": limit}
+        if workspace_id:
+            payload["workspace_id"] = workspace_id
+        return _invoke(rpc_token, "browser_workspace", payload)
+
+    def hibernate(action: str = "hibernate", *, target_id: str | None = None, dry_run: bool = False) -> dict[str, Any]:
+        payload: dict[str, Any] = {"action": action, "dry_run": dry_run}
+        if target_id:
+            payload["target_id"] = target_id
+        return _invoke(rpc_token, "browser_hibernate_tabs", payload)
+
+    total_slept = 0.0
+
     def wait(seconds: float = 0.25) -> dict[str, Any]:
+        nonlocal total_slept
         bounded = max(0.0, min(5.0, float(seconds)))
+        if total_slept + bounded > 10.0:
+            raise RuntimeError("Pipeline cumulative wait() budget exceeded (10.0s max)")
+        total_slept += bounded
         time.sleep(bounded)
         return {"ok": True, "slept_sec": bounded}
 
     def emit(data: Any) -> Any:
+        if len(emitted) >= 100:
+            raise RuntimeError("Pipeline emit() output cap exceeded (100 items max)")
         emitted.append(data)
         return data
 
@@ -673,6 +843,12 @@ def _build_closure_rpc(
             "extract": extract,
             "generative_ui": generative_ui,
             "dialog": dialog,
+            "perception": perception,
+            "webmcp_list": webmcp_list,
+            "webmcp_call": webmcp_call,
+            "vault": vault,
+            "workspace": workspace,
+            "hibernate": hibernate,
             "wait": wait,
             "emit": emit,
         }
@@ -724,17 +900,42 @@ class PipelineSandboxRunner:
                 tree = validate_pipeline_ast(script)
                 compiled = compile(tree, filename="<luminara_pipeline>", mode="exec")
                 sandbox_ns: dict[str, Any] = {"__builtins__": dict(_SAFE_BUILTINS), "luminara": facade}
-                exec(compiled, sandbox_ns)  # noqa: S102
-                count_now, _, emitted_now = read_state()
+                deadline = time.monotonic() + 15.0
+                line_steps = 0
+                prev_trace = sys.gettrace()
+
+                def _sandbox_trace(frame: Any, event: str, _arg: Any) -> Any:
+                    nonlocal line_steps
+                    if frame.f_code.co_filename != "<luminara_pipeline>":
+                        return None
+                    if event == "line":
+                        line_steps += 1
+                        if line_steps > 25000:
+                            raise RuntimeError("Pipeline CPU step budget exceeded (25000 statements)")
+                        if time.monotonic() > deadline:
+                            raise RuntimeError("Pipeline wall-clock execution deadline exceeded (15.0s)")
+                        for v in frame.f_locals.values():
+                            if isinstance(v, (str, list, dict, set, tuple)) and len(v) > 250_000:
+                                raise RuntimeError("Pipeline memory allocation cap exceeded")
+                    return _sandbox_trace
+
+                sys.settrace(_sandbox_trace)
+                try:
+                    exec(compiled, sandbox_ns)  # noqa: S102
+                finally:
+                    sys.settrace(prev_trace)
+                _, _, emitted_now = read_state()
                 if "result" in sandbox_ns and not emitted_now:
                     facade.emit(sandbox_ns["result"])
             else:
                 raise ValueError("browser_exec_pipeline requires either `steps` or `script`")
         except _PipelineGatePause as pause:
             calls_exec, call_log, outputs = read_state()
+            is_seq_block = pause.status == "PAUSED_SEQUENCE_BLOCK"
             return {
-                "ok": True,
-                "status": "PAUSED_HUMAN_HANDOFF",
+                "ok": not is_seq_block,
+                "blocked": is_seq_block,
+                "status": pause.status,
                 "gate_type": pause.gate_type,
                 "calls_executed": calls_exec,
                 "call_log": call_log,

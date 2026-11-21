@@ -1,8 +1,8 @@
-# Luminara Browser (`v3.0.0`)
+# Luminara Browser (`v3.1.0`)
 
 **Privacy-hardened Ungoogled-Chromium (`157`–`160` patch track) engineered for 100x Human + AI Agent co-browsing.**
 
-Luminara Browser combines **134 Ungoogled-Chromium C++ privacy & Windows patches + 4 Zero-Fuzz Luminara C++ Engine Patches** (`.void0` domain trap, `luminara://` WebUI, `URLLoaderThrottle` hooks, `SidePanelCoordinator`, deterministic eTLD+1 farbling, zero Google telemetry) with a **zero-dependency Python stdlib Agent Daemon** (`127.0.0.1:8796`), **Persistent Multiplexed CDP Bus (`<1.5ms` RTT, zero `F12` lockouts)**, **Blink `AXTree` + Shadow-DOM + OOPIF Perception**, **W3C WebMCP (`navigator.modelContext`)**, **Network Mutation Firewall (`Fetch.enable` Savepoints)**, **Windows DPAPI + AEAD Encrypted Vault**, **SQLite WAL+FTS5 Workspaces + Tab Hibernation**, **Privacy Shield v3**, **Offline-First `<8ms` MV3 Command Deck + `Alt+K` Palette**, and a **20-Tool MCP v2 Server**.
+Luminara Browser combines **134 Ungoogled-Chromium C++ privacy & Windows patches + 4 Zero-Fuzz Luminara C++ Engine Patches** (`.void0` domain trap, `luminara://` WebUI, `URLLoaderThrottle` hooks, `SidePanelCoordinator`, deterministic eTLD+1 farbling, zero Google telemetry) with a **zero-dependency Python stdlib Agent Daemon** (`127.0.0.1:8796`), **Persistent Multiplexed CDP Bus (`<1.5ms` RTT, zero `F12` lockouts)**, **Blink `AXTree` + Shadow-DOM + OOPIF Perception**, **W3C WebMCP (`navigator.modelContext`)**, **Network Mutation Firewall (`Fetch.enable` Savepoints)**, **Numbat Behavioral Sequence Guard (`CASE-*.zip`)**, **Hermetic Declared-Origin PNG VRT**, **Fenced Web Monitors & CAS Playbooks**, **Windows DPAPI + AEAD Encrypted Vault**, **SQLite WAL+FTS5 Workspaces + Tab Hibernation**, **Privacy Shield v3**, **Offline-First `<8ms` MV3 Command Deck + `Alt+K` Palette**, and a **28-Tool / 9-Resource MCP v2 Server**.
 
 ---
 
@@ -23,12 +23,9 @@ Luminara Browser combines **134 Ungoogled-Chromium C++ privacy & Windows patches
 
 | Gate / Experiment | Result | Key Verified Metric |
 | :--- | :---: | :--- |
-| **REA Reconstruction Ledger (`OBL-01`..`OBL-14`)** | **14 / 14 PASS** | 108 Core + 26 Windows patches + 4 Luminara C++ patches, live CDP, 20-tool MCP v2, SHA-256 + HMAC chain |
+| **REA Reconstruction Ledger (`OBL-01`..`OBL-21`)** | **21 / 21 PASS** | 108 Core + 26 Windows + 4 Luminara C++ patches, 7 Perplexity AI clean-room engines, 28-tool MCP v2, SHA-256 + HMAC chain |
 | **100x Engine Suite (`BM-01`..`BM-06`)** | **6 / 6 PASS** | **`0.118 ms` Mux CDP RTT** (`9.94x`), **`-95.4%` WebMCP tokens**, DPAPI/AEAD Vault, `Fetch` Firewall, `85%` Tab Freeze |
-| **AB-01: Multi-Tab Research Throughput** | **PASS** | **`4.47x`–`4.54x` faster** per-domain parallel vs sequential (`8/8` fault-isolated) |
-| **AB-02: Set-of-Marks Context & Injection Defense** | **PASS** | **`-96.8%` prompt tokens** (`79` vs `2,457`) & **`0%`** hidden CSS injection leak |
-| **AB-03: Sortable Matrix UX & `320px` Reflow** | **PASS** | **`1`-click `O(1)` sort** vs `6` card scans & **`0px`** overflow at `320px` |
-| **AB-04: Multi-LLM Cascading Failover** | **PASS** | **`100%` completion** (`Gemini -> Anthropic -> OpenAI/Ollama -> Zero-Key Heuristic`) |
+| **A/B Production Suite (`AB-01`..`AB-08`)** | **8 / 8 PASS** | **`4.5x` parallel**, **`-96.8%` SoM tokens**, `320px` reflow, Multi-LLM failover, DPAPI Vault, AST Sandbox, Playbooks, Redactor |
 
 ### Security & Co-Browsing Guarantees
 - **Loopback DNS-Rebinding & CSRF Protection**: Both `:8795` and `:8796` validate `Host`, reject cross-site & unkeyed `Origin: null` sandboxed iframes, and enforce `Content-Type: application/json` on `POST`.
@@ -42,9 +39,10 @@ Luminara Browser combines **134 Ungoogled-Chromium C++ privacy & Windows patches
 ```powershell
 # Run strict unit, security, PowerShell AST, upstream C++ patch, REA & 100x benchmark suite (zero warnings)
 cd chromium-forge
+python -m forge build-portable   # unpacks cached Chromium 157 portable runtime on a fresh clone
 python -W error -m unittest discover -s tests -v
 python -m forge verify-upstream-patches
-python -m forge verify-rea
+python -m forge verify-rea       # use --static-only on Linux/CI without chrome.exe
 python -m forge benchmark
 python -m forge benchmark-100x
 

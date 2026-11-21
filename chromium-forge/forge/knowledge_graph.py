@@ -23,7 +23,7 @@ import threading
 import time
 from typing import Any
 
-from .cdp_client import CDPBridge
+from .cdp_client import CDPBridge, is_internal_browser_url
 from .luminara_security import DEFAULT_REDACTOR, LuminaraRedactor
 
 _WORKSPACE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._\-]{1,48}$")
@@ -110,6 +110,14 @@ class KnowledgeWorkspaceStore:
                     INSERT INTO knowledge_fts(rowid, entity_name, entity_text, title, url)
                     VALUES (new.id, new.entity_name, new.entity_text, new.title, new.url);
                 END;
+
+                CREATE TABLE IF NOT EXISTS resource_leases (
+                    resource_id TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    lease_epoch INTEGER NOT NULL,
+                    expires_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL
+                ) STRICT;
                 """
             )
             now_ms = int(time.time() * 1000)
@@ -224,13 +232,22 @@ class KnowledgeWorkspaceStore:
         """Index extracted structured rows into the cross-tab FTS5 knowledge graph (scrubbed at rest)."""
         if not rows:
             return 0
-        wid = (workspace_id or "default").strip().lower()
+        wid = (workspace_id or "").strip().lower() or "default"
+        if not _WORKSPACE_ID_RE.match(wid):
+            raise ValueError(f"Invalid workspace_id {workspace_id!r}")
         clean_url = self.redactor.redact_text(url or "")[:500]
         clean_title = self.redactor.redact_text(title or "")[:200]
         clean_rows = self.redactor.redact_payload(rows[:200])
         now_ms = int(time.time() * 1000)
         inserted = 0
         with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO workspaces(workspace_id, name, description, updated_at_ms)
+                VALUES (?, ?, '', ?)
+                """,
+                (wid, wid.replace("_", " ").replace("-", " ").title()[:80], now_ms),
+            )
             for item in clean_rows:
                 if not isinstance(item, dict):
                     continue
@@ -242,6 +259,19 @@ class KnowledgeWorkspaceStore:
                 )[:160]
                 etext = " ".join(f"{k}: {v}" for k, v in item.items() if v not in (None, ""))[:1200]
                 selector = str(item.get("_selector") or item.get("selector") or "")[:160]
+                serialized = json.dumps(item, ensure_ascii=False)
+                if len(serialized) > 2400:
+                    compacted = {str(k)[:64]: (v[:280] if isinstance(v, str) else v) for k, v in list(item.items())[:25]}
+                    serialized = json.dumps(compacted, ensure_ascii=False)
+                    if len(serialized) > 2400:
+                        serialized = json.dumps({"name": ename, "summary": etext[:1800]}, ensure_ascii=False)
+                conn.execute(
+                    """
+                    DELETE FROM knowledge_entities
+                    WHERE workspace_id = ? AND url = ? AND entity_name = ? AND entity_text = ?
+                    """,
+                    (wid, clean_url, ename, etext),
+                )
                 conn.execute(
                     """
                     INSERT INTO knowledge_entities(
@@ -254,7 +284,7 @@ class KnowledgeWorkspaceStore:
                         clean_title,
                         ename,
                         etext,
-                        json.dumps(item, ensure_ascii=False)[:2400],
+                        serialized,
                         selector,
                         receipt_id[:80],
                         now_ms,
@@ -271,9 +301,7 @@ class KnowledgeWorkspaceStore:
         limit: int = 25,
     ) -> list[dict[str, Any]]:
         """Execute a safe FTS5 BM25-ranked search across all indexed tabs and entities."""
-        tokens = re.findall(r"[A-Za-z0-9_]{2,}", query or "")
-        if not tokens:
-            tokens = re.findall(r"[A-Za-z0-9_]+", query or "")
+        tokens = re.findall(r"\w+", query or "")
         if not tokens:
             return []
         fts_expr = " AND ".join(f'"{t}"*' for t in tokens[:8])
@@ -305,8 +333,35 @@ class KnowledgeWorkspaceStore:
                     """,
                     (fts_expr, lim),
                 ).fetchall()
+            if not rows and any(ord(ch) > 127 for ch in (query or "")):
+                like_conds = " AND ".join(
+                    "(ke.entity_name LIKE ? ESCAPE '\\' OR ke.entity_text LIKE ? ESCAPE '\\' OR ke.title LIKE ? ESCAPE '\\')"
+                    for _ in tokens[:8]
+                )
+                like_args: list[Any] = []
+                for t in tokens[:8]:
+                    esc = "%" + t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+                    like_args.extend([esc, esc, esc])
+                ws_clause = " AND ke.workspace_id = ?" if filter_ws else ""
+                if filter_ws:
+                    like_args.append(filter_ws)
+                like_args.append(lim)
+                rows = conn.execute(
+                    f"""
+                    SELECT ke.*, 0.0 AS rank
+                    FROM knowledge_entities ke
+                    WHERE {like_conds}{ws_clause}
+                    ORDER BY ke.created_at_ms DESC
+                    LIMIT ?
+                    """,
+                    tuple(like_args),
+                ).fetchall()
         out: list[dict[str, Any]] = []
         for r in rows:
+            try:
+                parsed_entity = json.loads(r["entity_json"])
+            except Exception:  # noqa: BLE001
+                parsed_entity = {"text": r["entity_text"]}
             out.append(
                 {
                     "id": int(r["id"]),
@@ -315,13 +370,63 @@ class KnowledgeWorkspaceStore:
                     "title": r["title"],
                     "entity_name": r["entity_name"],
                     "entity_text": r["entity_text"],
-                    "entity": json.loads(r["entity_json"]),
+                    "entity": parsed_entity,
                     "selector": r["selector"],
                     "receipt_id": r["receipt_id"],
                     "created_at_ms": int(r["created_at_ms"]),
                 }
             )
         return out
+
+    def acquire_fenced_lease(
+        self,
+        resource_id: str,
+        owner_id: str,
+        *,
+        ttl_ms: int = 30_000,
+        now_ms: int | None = None,
+    ) -> dict[str, Any]:
+        """SPACE-style monotonic fencing-token (`lease_epoch`) checkout with automatic expiry reconciliation."""
+        rid = (resource_id or "").strip()[:160]
+        oid = (owner_id or "").strip()[:120]
+        if not rid or not oid:
+            raise ValueError("resource_id and owner_id must be non-empty")
+        cur_ms = int(now_ms if now_ms is not None else time.time() * 1000)
+        eff_ttl = max(1000, min(3_600_000, int(ttl_ms)))
+        with self._lock, self._connect() as conn:
+            row = conn.execute("SELECT * FROM resource_leases WHERE resource_id = ?", (rid,)).fetchone()
+            if row and row["owner_id"] and row["owner_id"] != oid and int(row["expires_at_ms"]) > cur_ms:
+                raise PermissionError(
+                    f"Resource {rid!r} is actively leased by {row['owner_id']!r} (epoch {row['lease_epoch']})"
+                )
+            next_epoch = (int(row["lease_epoch"]) + 1) if row else 1
+            exp_ms = cur_ms + eff_ttl
+            conn.execute(
+                """
+                INSERT INTO resource_leases(resource_id, owner_id, lease_epoch, expires_at_ms, updated_at_ms)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(resource_id) DO UPDATE SET
+                    owner_id = excluded.owner_id,
+                    lease_epoch = excluded.lease_epoch,
+                    expires_at_ms = excluded.expires_at_ms,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (rid, oid, next_epoch, exp_ms, cur_ms),
+            )
+        return {"resource_id": rid, "owner_id": oid, "lease_epoch": next_epoch, "expires_at_ms": exp_ms}
+
+    def verify_fenced_epoch(self, resource_id: str, owner_id: str, expected_epoch: int, *, now_ms: int | None = None) -> bool:
+        """Fail closed if a newer worker epoch superseded this lease or the lease expired."""
+        cur_ms = int(now_ms if now_ms is not None else time.time() * 1000)
+        with self._lock, self._connect() as conn:
+            row = conn.execute("SELECT * FROM resource_leases WHERE resource_id = ?", ((resource_id or "").strip(),)).fetchone()
+            if not row:
+                return False
+            return (
+                row["owner_id"] == (owner_id or "").strip()
+                and int(row["lease_epoch"]) == int(expected_epoch)
+                and int(row["expires_at_ms"]) > cur_ms
+            )
 
 
 class TabLifecycleManager:
@@ -358,10 +463,6 @@ class TabLifecycleManager:
         eligible: list[dict[str, Any]] = []
         protected: list[dict[str, Any]] = []
         with self._lock:
-            for tab in tabs:
-                t_id = str(tab.get("target_id") or "")
-                if t_id and t_id not in self._last_active:
-                    self._last_active[t_id] = now
             pinned_copy = set(self._pinned)
             last_copy = dict(self._last_active)
 
@@ -377,13 +478,9 @@ class TabLifecycleManager:
                 reason = "pinned"
             elif tab.get("lease") or self.cdp.leases.get_active(tid):
                 reason = "agent_leased"
-            elif (
-                not url
-                or url == "about:blank"
-                or url.startswith(("http://127.0.0.1:8795", "http://127.0.0.1:8796", "chrome://", "chrome-extension://", "luminara://"))
-            ):
+            elif is_internal_browser_url(url, cdp_port=self.cdp.port):
                 reason = "internal_ui"
-            elif min_idle_sec > 0 and (now - last_copy.get(tid, now)) < min_idle_sec:
+            elif min_idle_sec > 0 and (now - last_copy.get(tid, 0.0)) < min_idle_sec:
                 reason = "recently_active"
 
             if reason:

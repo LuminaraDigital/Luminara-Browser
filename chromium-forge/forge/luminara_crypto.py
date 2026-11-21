@@ -198,12 +198,16 @@ def aead_open(key: bytes, blob: dict[str, str], *, aad: bytes = b"") -> bytes:
     """Authenticate `aad` + ciphertext tag in constant time and decrypt."""
     if len(key) < 32:
         raise CryptoError("AEAD master key must be at least 32 bytes")
+    if not isinstance(blob, dict) or blob.get("alg") != "HKDF-SHA256-CTR-HMAC":
+        raise CryptoError("Unsupported or malformed AEAD cipher algorithm")
     try:
-        nonce = base64.b64decode(blob["nonce"])
-        ct = base64.b64decode(blob["ct"])
-        tag = base64.b64decode(blob["tag"])
+        nonce = base64.b64decode(blob["nonce"], validate=True)
+        ct = base64.b64decode(blob["ct"], validate=True)
+        tag = base64.b64decode(blob["tag"], validate=True)
     except Exception as exc:  # noqa: BLE001
         raise CryptoError(f"Malformed AEAD envelope: {exc}") from exc
+    if len(nonce) != 16 or len(tag) != 32:
+        raise CryptoError("Invalid AEAD nonce or HMAC tag length")
 
     derived = _hkdf_sha256(key, nonce, b"luminara-aead-v2", 64)
     enc_key, mac_key = derived[:32], derived[32:]

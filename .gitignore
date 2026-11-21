@@ -4,6 +4,7 @@
 chromium-forge/dist/
 chromium-forge/cache/
 chromium-forge/outputs/
+_rea_targets/
 vendor/
 ungoogled-chromium/build/
 ungoogled-chromium-windows/build/
@@ -28,6 +29,8 @@ ungoogled-chromium-windows/ungoogled-chromium/
 *.pak
 
 # Python / Node / Cloudflare local state
+/build/
+/dist/
 .venv/
 venv/
 __pycache__/

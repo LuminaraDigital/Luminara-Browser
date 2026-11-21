@@ -21,12 +21,19 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Fetch pinned ungoogled-chromium 157 Windows x64 base archive
+      - name: Fetch & verify pinned ungoogled-chromium 157 Windows x64 base archive
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path chromium-forge/cache | Out-Null
+          $zipPath = "chromium-forge/cache/ungoogled-chromium_157.0.8103.50-1.1_windows_x64.zip"
+          $expectedSha = "42a846b04e73f7d54a63e39964a7d5b73875507a2a205e6cdb32e88d7928e97d"
           $url = "https://github.com/ungoogled-software/ungoogled-chromium-windows/releases/download/157.0.8103.50-1.1/ungoogled-chromium_157.0.8103.50-1.1_windows_x64.zip"
-          curl.exe -fL --retry 3 -o "chromium-forge/cache/ungoogled-chromium_157.0.8103.50-1.1_windows_x64.zip" $url
+          curl.exe -fL --retry 3 -o $zipPath $url
+          $actualSha = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLower()
+          if ($actualSha -ne $expectedSha) {
+            throw "Base archive SHA-256 mismatch: expected $expectedSha, got $actualSha"
+          }
 
       - name: Assemble portable Luminara Browser & run unit, REA, A/B & 100x gates
         shell: pwsh
@@ -37,17 +44,36 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
+          python -m forge verify-arch
           python -m forge verify-upstream-patches
           python -m forge build-portable
           python -W error -m unittest discover -s tests -v
           python -m forge verify-rea
           python -m forge benchmark
           python -m forge benchmark-100x
+          python -m forge build-portable --release
           Compress-Archive -Path "dist/luminara-browser-win64/*" -DestinationPath "dist/Luminara-Browser-win64-portable.zip" -Force
-          $hash = (Get-FileHash "dist/Luminara-Browser-win64-portable.zip" -Algorithm SHA256).Hash.ToLower()
-          "$hash  Luminara-Browser-win64-portable.zip" | Out-File -Encoding utf8 "dist/SHA256SUMS.txt"
-          python -c "import hashlib, json, os; from pathlib import Path; import forge; from forge.updater import canonical_manifest_bytes, sign_release_manifest; ref = (os.environ.get('GITHUB_REF_NAME') or '').lstrip('v'); ver = ref if ref and ref[0].isdigit() else forge.__version__; m={'version':ver,'chromium_version':'157.0.8103.78-1.1','portable_binary_base':'157.0.8103.50-1.1','artifact_name':'Luminara-Browser-win64-portable.zip','artifact_sha256':'$hash'}; k=os.environ.get('LUMINARA_RELEASE_KEY_HEX','').strip(); m=sign_release_manifest(m,bytes.fromhex(k)) if len(k)>=64 else {**m,'manifest_sha256':hashlib.sha256(canonical_manifest_bytes(m)).hexdigest()}; Path('dist/release-manifest.json').write_text(json.dumps(m,indent=2)+'\n', encoding='utf-8')"
-          python -m forge check-updates --manifest dist/release-manifest.json --artifact dist/Luminara-Browser-win64-portable.zip --allow-unsigned
+          @'
+import sys, zipfile
+z = zipfile.ZipFile("dist/Luminara-Browser-win64-portable.zip")
+toks = ("local_ui_key.txt", "action_ledger.jsonl", "vault.json", "vault.key.json", ".sqlite3", "scheduled_tasks.json", "sequence_guard_state.json", "casebundles/")
+bad = [n for n in z.namelist() if any(t in n for t in toks)]
+sp = [n for n in z.namelist() if n.endswith("luminara-copilot/sidepanel.js")]
+sp_src = z.read(sp[0]).decode("utf-8") if sp else ""
+if bad:
+    sys.exit("Secret leaked in zip: " + str(bad))
+if 'const UI_KEY = "";' not in sp_src:
+    sys.exit("UI_KEY leaked or missing in sidepanel.js")
+print("Release zip secret & UI_KEY scrub verified:", len(z.namelist()), "entries")
+'@ | python -
+          $hash = (Get-FileHash -LiteralPath "dist/Luminara-Browser-win64-portable.zip" -Algorithm SHA256).Hash.ToLower()
+          [System.IO.File]::WriteAllText((Join-Path (Get-Location) "dist/SHA256SUMS.txt"), "$hash  Luminara-Browser-win64-portable.zip`n", [System.Text.UTF8Encoding]::new($false))
+          python -m forge sign-manifest --artifact-name Luminara-Browser-win64-portable.zip --artifact-sha256 $hash --out dist/release-manifest.json
+          if ($env:LUMINARA_RELEASE_KEY_HEX) {
+            python -m forge check-updates --manifest dist/release-manifest.json --artifact dist/Luminara-Browser-win64-portable.zip
+          } else {
+            python -m forge check-updates --manifest dist/release-manifest.json --artifact dist/Luminara-Browser-win64-portable.zip --allow-unsigned
+          }
 
       - name: Publish GitHub Release Assets
         if: startsWith(github.ref, 'refs/tags/v')

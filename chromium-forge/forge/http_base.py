@@ -123,11 +123,9 @@ class LoopbackJSONHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         return
 
-    def _has_valid_ui_key(self, ui_hdr: str) -> bool:
+    def _has_static_ui_key(self, ui_hdr: str) -> bool:
         if not ui_hdr:
             return False
-        if callable(self.session_verifier) and self.session_verifier(ui_hdr):
-            return True
         if self.local_ui_key and secrets.compare_digest(ui_hdr, self.local_ui_key):
             return True
         if self.forge_root_dir is not None:
@@ -136,6 +134,13 @@ class LoopbackJSONHandler(BaseHTTPRequestHandler):
                 self.__class__.local_ui_key = fresh_key
                 return True
         return False
+
+    def _has_valid_ui_key(self, ui_hdr: str) -> bool:
+        if not ui_hdr:
+            return False
+        if callable(self.session_verifier) and self.session_verifier(ui_hdr, required_scope="ui"):
+            return True
+        return self._has_static_ui_key(ui_hdr)
 
     def _has_valid_bearer(self) -> bool:
         auth = (self.headers.get("Authorization") or "").strip()
@@ -249,7 +254,7 @@ class LoopbackJSONHandler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
 
     def send_json(self, payload: Any, status: int = 200) -> None:
-        raw = json.dumps(payload, ensure_ascii=False).encode(ENCODING)
+        raw = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode(ENCODING)
         self.send_response(status)
         self.write_cors_headers()
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -268,6 +273,18 @@ class LoopbackJSONHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def send_bytes(self, raw: bytes, content_type: str = "application/octet-stream", *, filename: str = "", status: int = 200) -> None:
+        self.send_response(status)
+        self.write_cors_headers()
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
+        if filename:
+            safe_fn = "".join(ch for ch in filename if ch.isalnum() or ch in "._-")[:96] or "download.bin"
+            self.send_header("Content-Disposition", f'attachment; filename="{safe_fn}"')
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
     def read_json_dict(self) -> dict[str, Any]:
         raw_len = self.headers.get("Content-Length", "0") or "0"
         try:
@@ -278,7 +295,11 @@ class LoopbackJSONHandler(BaseHTTPRequestHandler):
             raise ValueError(f"Request body exceeds {MAX_BODY_BYTES} byte limit")
         if length == 0:
             return {}
-        parsed = json.loads(self.rfile.read(length).decode(ENCODING))
+
+        def _reject_nonfinite(constant: str) -> None:
+            raise ValueError(f"Non-standard JSON number rejected: {constant}")
+
+        parsed = json.loads(self.rfile.read(length).decode(ENCODING), parse_constant=_reject_nonfinite)
         if not isinstance(parsed, dict):
             raise ValueError("JSON request body must be a JSON object")
         return parsed

@@ -9,16 +9,17 @@
     :root {
       color-scheme: dark light;
       --bg-canvas: light-dark(oklch(0.975 0.005 255), oklch(0.115 0.012 255));
-      --bg-panel: light-dark(oklch(0.95 0.007 255), oklch(0.148 0.014 255));
-      --bg-elevated: light-dark(oklch(0.92 0.009 255), oklch(0.182 0.016 255));
+      --bg-panel: light-dark(oklch(0.95 0.007 255), oklch(0.15 0.013 255));
+      --bg-elevated: light-dark(oklch(0.915 0.009 255), oklch(0.188 0.015 255));
       --bg-code: light-dark(oklch(0.935 0.008 255), oklch(0.095 0.01 255));
-      --ink-0: light-dark(oklch(0.15 0.015 255), oklch(0.96 0.006 255));
-      --ink-1: light-dark(oklch(0.36 0.015 255), oklch(0.76 0.012 255));
+      --ink-0: light-dark(oklch(0.15 0.015 255), oklch(0.965 0.005 255));
+      --ink-1: light-dark(oklch(0.34 0.015 255), oklch(0.78 0.012 255));
       --ink-2: light-dark(oklch(0.44 0.015 255), oklch(0.67 0.012 255));
-      --emerald: light-dark(oklch(0.48 0.15 162), oklch(0.75 0.16 162));
-      --amber: light-dark(oklch(0.52 0.15 72), oklch(0.78 0.15 78));
-      --coral: light-dark(oklch(0.50 0.19 26), oklch(0.66 0.19 28));
+      --emerald: light-dark(oklch(0.45 0.15 162), oklch(0.75 0.16 162));
+      --amber: light-dark(oklch(0.48 0.14 72), oklch(0.79 0.15 78));
+      --coral: light-dark(oklch(0.50 0.19 26), oklch(0.68 0.18 25));
       --hairline: light-dark(oklch(0.15 0.01 255 / 0.12), oklch(1 0 0 / 0.09));
+      --border-control: light-dark(oklch(0.15 0.01 255 / 0.34), oklch(1 0 0 / 0.28));
       --specular: inset 0 1px 0 0 oklch(1 0 0 / 0.1);
       --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
@@ -86,7 +87,7 @@
       font-size: 12px;
       padding: 8px 14px;
       border-radius: 10px;
-      border: 1px solid var(--hairline);
+      border: 1px solid var(--border-control);
       background: var(--bg-elevated);
       color: var(--ink-0);
       box-shadow: var(--specular);
@@ -123,13 +124,14 @@
       .col-config, .col-inspect { grid-column: span 12; }
     }
 
-    /* Concentric Radius Law: Outer 20px = Inner 8px + Padding 12px */
+    /* Concentric Radius Law: Outer 24px = Inner 8px + Padding 16px */
     .panel {
       background: var(--bg-panel);
       border: 1px solid var(--hairline);
       box-shadow: var(--specular), 0 12px 32px oklch(0 0 0 / 0.22);
-      border-radius: 20px;
+      border-radius: 24px;
       padding: 16px;
+      min-width: 0;
       animation: panelEnter 280ms var(--ease-out) both;
     }
     @keyframes panelEnter {
@@ -227,7 +229,7 @@
     .tab-btn.active {
       background: var(--bg-elevated);
       color: var(--emerald);
-      border-color: oklch(0.74 0.16 162 / 0.45);
+      border-color: color-mix(in oklch, var(--emerald) 45%, transparent);
     }
     pre.code-view {
       background: var(--bg-code);
@@ -262,16 +264,16 @@
       font-size: 10.5px;
       padding: 3px 8px;
       border-radius: 999px;
-      background: oklch(0.74 0.16 162 / 0.16);
+      background: color-mix(in oklch, var(--emerald) 16%, transparent);
       color: var(--emerald);
-      border: 1px solid oklch(0.74 0.16 162 / 0.4);
+      border: 1px solid color-mix(in oklch, var(--emerald) 40%, transparent);
     }
     .pill-fail {
       font-family: var(--font-mono);
       font-size: 10.5px;
       padding: 3px 8px;
       border-radius: 999px;
-      background: oklch(0.66 0.19 28 / 0.16);
+      background: color-mix(in oklch, var(--coral) 16%, transparent);
       color: var(--coral);
     }
     .banner {
@@ -293,13 +295,13 @@
     <div class="brand-row">
       <span class="status-led"></span>
       <div>
-        <div class="title">Luminara Browser Forge Cockpit</div>
-        <div class="kicker">REA Clean-Room Engine · Ungoogled 157 · 20-Tool MCP v2 :8796</div>
+        <div class="title">Luminara Browser Forge Cockpit v3.1.0</div>
+        <div class="kicker">REA Clean-Room Engine · Ungoogled 157 · 28-Tool MCP v2 :8796</div>
       </div>
     </div>
     <div class="actions">
       <button id="btnCompile" type="button">1. Compile Overlay</button>
-      <button id="btnVerify" type="button">2. Run REA Gate (14/14)</button>
+      <button id="btnVerify" type="button">2. Run REA Gate (21/21)</button>
       <button id="btnPortable" type="button">3. Build Portable Win64</button>
       <button id="btnLaunch" class="primary" type="button">Launch Luminara Browser ↗</button>
     </div>
@@ -321,7 +323,7 @@
             </div>
             <div class="field">
               <label for="slug">Distribution Slug</label>
-              <input id="slug" name="slug" type="text" required />
+              <input id="slug" name="slug" type="text" pattern="[a-z0-9][a-z0-9-]{1,48}" required />
             </div>
             <div class="field">
               <label for="trap_tld">Blackhole Trap TLD</label>
@@ -339,6 +341,11 @@
 
           <div class="toggles">
             <label class="toggle"><input type="checkbox" name="portable_mode" /> Portable Bundle Mode (DPAPI os_crypt Enabled)</label>
+            <label class="toggle"><input type="checkbox" name="enable_agent_cobrowsing" /> Simultaneous Human + AI Co-Browsing</label>
+            <label class="toggle"><input type="checkbox" name="enable_shield_v3" /> Privacy Shield v3 (DNR + Farbling)</label>
+            <label class="toggle"><input type="checkbox" name="enable_webmcp" /> W3C WebMCP Runtime</label>
+            <label class="toggle"><input type="checkbox" name="guard_network_mutations" /> Network Mutation Firewall</label>
+            <label class="toggle"><input type="checkbox" name="enable_tab_hibernation" /> Idle Tab Hibernation</label>
             <label class="toggle"><input type="checkbox" name="canvas_noise" /> Canvas Fingerprint Noise</label>
             <label class="toggle"><input type="checkbox" name="client_rects_noise" /> ClientRects Noise</label>
             <label class="toggle"><input type="checkbox" name="popups_to_tabs" /> Force Pop-ups to Tabs</label>
@@ -396,8 +403,9 @@
 
   <script>
     const LS_KEY = 'chromium_forge:active_tab';
-    let currentState = null;
-    let activeTab = localStorage.getItem(LS_KEY) || 'search_patch';
+    let currentState = {};
+    let activeTab = 'search_patch';
+    try { activeTab = localStorage.getItem(LS_KEY) || 'search_patch'; } catch (_e) {}
 
     function showBanner(msg, kind = 'ok') {
       const b = document.getElementById('statusBanner');
@@ -482,14 +490,21 @@
         opt.textContent = label;
         sel.appendChild(opt);
       });
+      if (profile.default_search && !Object.prototype.hasOwnProperty.call(presets, profile.default_search)) {
+        const customOpt = document.createElement('option');
+        customOpt.value = profile.default_search;
+        customOpt.textContent = profile.default_search === 'custom' ? 'Custom Search Engine' : profile.default_search;
+        sel.appendChild(customOpt);
+      }
       const form = document.getElementById('profileForm');
       ['brand_name', 'slug', 'trap_tld', 'default_search'].forEach(k => {
         if (form.elements[k]) form.elements[k].value = profile[k] || '';
       });
       form.elements['extra_blocked_domains'].value = (profile.extra_blocked_domains || []).join(', ');
       [
-        'portable_mode', 'canvas_noise', 'client_rects_noise', 'popups_to_tabs',
-        'force_punycode', 'allow_crx_install', 'disable_webrtc_leak', 'proprietary_codecs'
+        'portable_mode', 'enable_agent_cobrowsing', 'enable_shield_v3', 'enable_webmcp',
+        'guard_network_mutations', 'enable_tab_hibernation', 'canvas_noise', 'client_rects_noise',
+        'popups_to_tabs', 'force_punycode', 'allow_crx_install', 'disable_webrtc_leak', 'proprietary_codecs'
       ].forEach(k => {
         if (form.elements[k]) form.elements[k].checked = Boolean(profile[k]);
       });
@@ -498,14 +513,22 @@
     function readFormPayload() {
       const form = document.getElementById('profileForm');
       const extraRaw = form.elements['extra_blocked_domains'].value;
+      const slugVal = form.elements['slug'].value.trim();
+      const prevProf = (currentState && currentState.profile) || {};
+      const preservedTag = (prevProf.slug === slugVal && prevProf.channel_tag) ? prevProf.channel_tag : (slugVal + '-agentic');
       return {
         brand_name: form.elements['brand_name'].value.trim(),
-        slug: form.elements['slug'].value.trim(),
-        channel_tag: form.elements['slug'].value.trim() + '-agentic',
+        slug: slugVal,
+        channel_tag: preservedTag,
         trap_tld: form.elements['trap_tld'].value.trim(),
         default_search: form.elements['default_search'].value,
         extra_blocked_domains: extraRaw.split(',').map(s => s.trim()).filter(Boolean),
         portable_mode: form.elements['portable_mode'].checked,
+        enable_agent_cobrowsing: form.elements['enable_agent_cobrowsing'].checked,
+        enable_shield_v3: form.elements['enable_shield_v3'].checked,
+        enable_webmcp: form.elements['enable_webmcp'].checked,
+        guard_network_mutations: form.elements['guard_network_mutations'].checked,
+        enable_tab_hibernation: form.elements['enable_tab_hibernation'].checked,
         canvas_noise: form.elements['canvas_noise'].checked,
         client_rects_noise: form.elements['client_rects_noise'].checked,
         popups_to_tabs: form.elements['popups_to_tabs'].checked,
@@ -549,7 +572,7 @@
     document.querySelectorAll('#artifactTabs .tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         activeTab = btn.dataset.tab;
-        localStorage.setItem(LS_KEY, activeTab);
+        try { localStorage.setItem(LS_KEY, activeTab); } catch (_e) {}
         syncCodeView();
       });
     });

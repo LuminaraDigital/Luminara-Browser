@@ -1,53 +1,27 @@
-"""Clean-room Generative UI Workspace & MV3 SidePanel Copilot Generator (`forge/luminara_workspace_ui.py`).
+"""Clean-room Generative UI Workspace Generator (`forge/luminara_workspace_ui.py`).
 
 Production upgrades:
 - Zero dynamic `.innerHTML` (full DOM XSS immunity across `SummaryBar` KPIs and `TableView`).
 - Real interactive column sorting (`aria-sort` + natural numeric `Intl.Collator`) in `Sortable Table`.
-- RFC 4180 CSV quoting + UTF-8 BOM (`\\uFEFF`) + formula-injection guard + pipe-safe Markdown + `URL.revokeObjectURL`.
-- Input-safe `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` 50-slot `CommandHistory`.
-- Automatic hydration from `GET /api/agent/genui/latest` so Copilot `Page -> GenUI` (`http://127.0.0.1:8796/workspace`)
-  opens populated with zero cross-origin `localStorage` loss!
-- MV3 `luminara-copilot` includes generated PNG icons (`16`/`48`/`128`), explicit CSP, top-level + `onStartup`
-  `sidePanel.setPanelBehavior`, and `runAction` error/loading states.
+- Unified `getVisibleEntities()` shared across `ComparisonView`, `Sortable Table`, `SummaryBar`, and RFC 4180 CSV/JSON/MD Export.
+- Input-safe `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` 50-slot `CommandHistory` + cross-origin `/api/agent/genui/sync`.
+- Automatic hydration from `GET /api/agent/genui/latest` (`hadLocalGenUi` + `Math.max(generated_at, updated_at)`) + Passport Token bar.
 """
 
 from __future__ import annotations
 
 import html
-import json
-from pathlib import Path
-import struct
-import zlib
 
+from .luminara_copilot_ext import (
+    _js_json,
+    build_palette_js,
+    make_solid_emerald_png,
+    write_copilot_extension,
+)
+from .luminara_telemetry_ui import build_telemetry_cockpit_css, build_telemetry_cockpit_js
 from .models import ForkProfile
 
 ENCODING = "utf-8"
-
-
-def _js_json(val: object) -> str:
-    return json.dumps(val, ensure_ascii=False).replace("</", "<\\/")
-
-
-def make_solid_emerald_png(size: int) -> bytes:
-    """Generate a valid RGBA PNG icon (`#10b981` rounded badge on `#0f131a`) in pure Python stdlib."""
-    rows: list[bytes] = []
-    pad = max(1, size // 8)
-    for y in range(size):
-        row = bytearray([0])  # Filter type 0 (None)
-        for x in range(size):
-            inside = pad <= x < (size - pad) and pad <= y < (size - pad)
-            if inside:
-                row.extend((16, 185, 129, 255))
-            else:
-                row.extend((15, 19, 26, 255))
-        rows.append(bytes(row))
-
-    def _chunk(tag: bytes, data: bytes) -> bytes:
-        return struct.pack("!I", len(data)) + tag + data + struct.pack("!I", zlib.crc32(tag + data) & 0xFFFFFFFF)
-
-    ihdr = struct.pack("!IIBBBBB", size, size, 8, 6, 0, 0, 0)
-    idat = zlib.compress(b"".join(rows), level=9)
-    return b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
 
 
 def build_luminara_workspace_html(
@@ -59,6 +33,9 @@ def build_luminara_workspace_html(
     """Clean-room Generative UI Studio (`SummaryBar`, `ComparisonView`, `Sortable Table`, `StackView`, 50-slot Undo/Redo)."""
     brand_esc = html.escape(profile.brand_name)
     daemon_base = f"http://127.0.0.1:{agent_port}"
+    palette_iife = build_palette_js(profile.resolved_search_engine().search_url, agent_port=agent_port)
+    tele_css = build_telemetry_cockpit_css()
+    tele_js = build_telemetry_cockpit_js()
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -72,13 +49,15 @@ def build_luminara_workspace_html(
       color-scheme: dark light;
       --bg-0: light-dark(oklch(0.975 0.005 255), oklch(0.115 0.012 255));
       --bg-1: light-dark(oklch(0.95 0.007 255), oklch(0.15 0.013 255));
-      --bg-2: light-dark(oklch(0.915 0.009 255), oklch(0.19 0.015 255));
+      --bg-2: light-dark(oklch(0.915 0.009 255), oklch(0.188 0.015 255));
       --ink-0: light-dark(oklch(0.15 0.015 255), oklch(0.965 0.005 255));
       --ink-1: light-dark(oklch(0.34 0.015 255), oklch(0.78 0.012 255));
       --ink-2: light-dark(oklch(0.44 0.015 255), oklch(0.67 0.012 255));
-      --accent: light-dark(oklch(0.48 0.15 162), oklch(0.75 0.16 162));
+      --accent: light-dark(oklch(0.45 0.15 162), oklch(0.75 0.16 162));
+      --amber: light-dark(oklch(0.48 0.14 72), oklch(0.79 0.15 78));
       --danger: light-dark(oklch(0.50 0.19 26), oklch(0.68 0.18 25));
       --hairline: light-dark(oklch(0.15 0.01 255 / 0.12), oklch(1 0 0 / 0.09));
+      --border-control: light-dark(oklch(0.15 0.01 255 / 0.34), oklch(1 0 0 / 0.28));
       --specular: inset 0 1px 0 0 oklch(1 0 0 / 0.1);
       --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       --font-mono: 'JetBrains Mono', Consolas, monospace;
@@ -90,20 +69,27 @@ def build_luminara_workspace_html(
       font-family: var(--font-sans); padding: clamp(0.85rem, 2.5vw, 2rem);
       display: grid; gap: 16px; align-content: start;
     }}
-    header, .toolbar, .kpi-bar, .status-line, main {{ max-width: 1280px; width: 100%; margin: 0 auto; min-width: 0; }}
+    header, .toolbar, .auth-bar, .kpi-bar, .status-line, main {{ max-width: 1280px; width: 100%; margin: 0 auto; min-width: 0; }}
     header {{ display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }}
-    .toolbar {{
+    .toolbar, .auth-bar {{
       background: var(--bg-1); border: 1px solid var(--hairline); box-shadow: var(--specular);
-      border-radius: 16px; padding: 12px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+      border-radius: 16px; padding: 12px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; align-items: center;
     }}
+    .auth-bar {{ display: none; border-color: color-mix(in oklch, var(--amber) 50%, transparent); }}
+    .auth-bar.visible {{ display: flex; }}
     .btn {{
       min-height: 32px;
-      padding: 8px 13px; border-radius: 10px; border: 1px solid var(--hairline);
+      padding: 8px 13px; border-radius: 10px; border: 1px solid var(--border-control);
       background: var(--bg-2); color: var(--ink-0); font-family: var(--font-mono);
       font-size: 11px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center;
     }}
     .btn.active {{ border-color: var(--accent); color: var(--accent); }}
     .btn:disabled {{ opacity: 0.45; cursor: not-allowed; }}
+    .search-box {{
+      min-height: 32px; width: 185px; max-width: 100%;
+      background: var(--bg-2); border: 1px solid var(--border-control); border-radius: 10px;
+      color: var(--ink-0); font-family: var(--font-mono); font-size: 11.5px; text-align: left; padding: 6px 10px;
+    }}
     .status-line {{ font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-2); }}
     .status-line.err {{ color: var(--danger); }}
     .kpi-bar {{
@@ -142,6 +128,7 @@ def build_luminara_workspace_html(
       font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; color: var(--ink-2);
     }}
     .th-sort:hover {{ color: var(--accent); }}
+    {tele_css}
     @media (prefers-reduced-motion: reduce) {{
       *, *::before, *::after {{ transition: none !important; animation: none !important; }}
     }}
@@ -150,7 +137,7 @@ def build_luminara_workspace_html(
 <body>
   <header>
     <div>
-      <div style="font-family:var(--font-mono);font-size:11px;color:var(--accent);letter-spacing:0.1em;">GENERATIVE UI WORKSPACE · 50-SLOT COMMAND HISTORY</div>
+      <div style="font-family:var(--font-mono);font-size:11px;color:var(--accent);letter-spacing:0.11em;">GENERATIVE UI WORKSPACE · 50-SLOT COMMAND HISTORY</div>
       <h1 id="wsTitle" style="font-size:clamp(1.35rem,2.4vw,1.75rem);letter-spacing:-0.03em;">Extracted Entity Studio</h1>
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -159,14 +146,23 @@ def build_luminara_workspace_html(
     </div>
   </header>
 
+  <form class="auth-bar" id="wsAuthBar">
+    <label class="status-line" for="wsPassportInput">Agent Passport or Human UI Key required by daemon:</label>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+      <input class="search-box" id="wsPassportInput" type="password" placeholder="Enter Token or 64-hex UI Key" autocomplete="off" />
+      <button class="btn active" type="submit">Authenticate ↵</button>
+    </div>
+  </form>
+
   <div class="toolbar">
-    <div style="display:flex;gap:6px;flex-wrap:wrap;" role="tablist" aria-label="Workspace Layout Mode">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;" role="tablist" aria-label="Workspace Layout Mode" id="wsTabList">
       <button class="btn active" type="button" role="tab" aria-selected="true" data-view="comparison">Comparison Cards</button>
       <button class="btn" type="button" role="tab" aria-selected="false" data-view="table">Sortable Table</button>
       <button class="btn" type="button" role="tab" aria-selected="false" data-view="stack">Stack Inspector</button>
+      <button class="btn" type="button" role="tab" aria-selected="false" data-view="telemetry">Telemetry Cockpit</button>
     </div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-      <input class="attr-val" id="wsSearch" type="search" placeholder="Filter entities..." aria-label="Filter workspace entities" style="width:170px;" />
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;" id="entityToolsGroup">
+      <input class="search-box" id="wsSearch" type="search" placeholder="Filter entities..." aria-label="Filter workspace entities" />
       <button class="btn" type="button" id="btnUndo" disabled>↶ Undo (Ctrl+Z)</button>
       <button class="btn" type="button" id="btnRedo" disabled>↷ Redo (Ctrl+Y)</button>
       <button class="btn" type="button" data-dl="json">Export JSON</button>
@@ -180,20 +176,35 @@ def build_luminara_workspace_html(
   <main id="viewContainer"></main>
 
   <script>
-    const DAEMON = {_js_json(daemon_base)};
+    const DAEMON = (/^https?:$/i.test(location.protocol) && /^(127\\.0\\.0\\.1|localhost|\\[::1\\])$/i.test(location.hostname))
+      ? location.origin
+      : {_js_json(daemon_base)};
     const UI_KEY = {_js_json(ui_key)};
     const KEY_GENUI = 'luminara_browser:genui_payload';
     const KEY_HIST = 'luminara_browser:command_history';
+    const KEY_SETTINGS = 'luminara_browser:settings';
+    const KEY_SS = 'luminara_browser:session_tok';
+    const KEY_VIEW = 'luminara_browser:telemetry_tab';
     const MAX_HISTORY = 50;
     const collator = new Intl.Collator(undefined, {{ numeric: true, sensitivity: 'base' }});
+    const hadLocalGenUi = (() => {{
+      try {{ return Boolean(localStorage.getItem(KEY_GENUI)); }} catch (_e) {{ return false; }}
+    }})();
 
+    const hashRaw = location.hash || '';
+    const hashViewMatch = hashRaw.match(/(?:^#|&)view=([^&]+)/);
     let state = loadInitialState();
-    let currentView = state.recommended_view || 'comparison';
+    let currentView = (() => {{
+      if (hashViewMatch) return decodeURIComponent(hashViewMatch[1]);
+      try {{ return localStorage.getItem(KEY_VIEW) || state.recommended_view || 'comparison'; }} catch (_e) {{ return state.recommended_view || 'comparison'; }}
+    }})();
     let sortCol = null;
     let sortAsc = true;
     let searchFilter = '';
     let undoStack = [];
     let redoStack = [];
+    let captureAbort = null;
+    {tele_js}
 
     function el(tag, cls, text) {{
       const n = document.createElement(tag);
@@ -202,9 +213,8 @@ def build_luminara_workspace_html(
       return n;
     }}
 
-    const SESSION_TOK = (() => {{
-      const KEY_SS = 'luminara_browser:session_tok';
-      const m = (location.hash || '').match(/(?:^#|&)lum_tok(?:en)?=([^&]+)/);
+    let sessionTok = (() => {{
+      const m = hashRaw.match(/(?:^#|&)lum_tok(?:en)?=([^&]+)/);
       if (m) {{
         const tok = decodeURIComponent(m[1]);
         try {{
@@ -213,19 +223,43 @@ def build_luminara_workspace_html(
         }} catch (_e) {{}}
         return tok;
       }}
+      if (hashViewMatch) {{
+        try {{ history.replaceState(null, '', location.pathname + location.search); }} catch (_e) {{}}
+      }}
       try {{ return sessionStorage.getItem(KEY_SS) || ''; }} catch (_e) {{ return ''; }}
     }})();
 
     function apiHeaders(isJson) {{
       const h = {{}};
-      const uiAuth = UI_KEY || SESSION_TOK;
+      const uiAuth = UI_KEY || sessionTok;
       if (uiAuth) h['X-Luminara-UI-Key'] = uiAuth;
       try {{
-        const s = JSON.parse(localStorage.getItem('luminara_browser:settings') || '{{}}');
+        const s = JSON.parse(localStorage.getItem(KEY_SETTINGS) || '{{}}');
         if (s && s.passportToken) h['Authorization'] = 'Bearer ' + String(s.passportToken).trim();
       }} catch (_e) {{}}
       if (isJson) h['Content-Type'] = 'application/json';
       return h;
+    }}
+
+    async function exchangePassportSession(forceRefresh = false) {{
+      if (!forceRefresh && (UI_KEY || sessionTok)) return;
+      try {{
+        const hdrs = apiHeaders(true);
+        const wantScope = Boolean(hdrs['X-Luminara-UI-Key']) ? 'ui' : 'agent';
+        const r = await fetch(DAEMON + '/api/agent/session-token', {{
+          method: 'POST',
+          headers: hdrs,
+          body: JSON.stringify({{ scope: wantScope, ttl_sec: 900 }}),
+          signal: AbortSignal.timeout(4000)
+        }});
+        if (r.ok) {{
+          const d = await r.json();
+          if (d && d.token && wantScope === 'ui') {{
+            sessionTok = d.token;
+            try {{ sessionStorage.setItem(KEY_SS, sessionTok); }} catch (_e) {{}}
+          }}
+        }}
+      }} catch (_e) {{}}
     }}
 
     function loadInitialState() {{
@@ -266,62 +300,25 @@ def build_luminara_workspace_html(
       }});
     }}
 
-    function persistState() {{
-      localStorage.setItem(KEY_GENUI, JSON.stringify(state));
-      localStorage.setItem(KEY_HIST, JSON.stringify({{ undoDepth: undoStack.length, redoDepth: redoStack.length }}));
+    function persistState(syncRemote = false) {{
+      try {{
+        localStorage.setItem(KEY_GENUI, JSON.stringify(state));
+        localStorage.setItem(KEY_HIST, JSON.stringify({{ undoDepth: undoStack.length, redoDepth: redoStack.length }}));
+      }} catch (_e) {{}}
       document.getElementById('btnUndo').disabled = undoStack.length === 0;
       document.getElementById('btnRedo').disabled = redoStack.length === 0;
+      if (syncRemote) {{
+        fetch(DAEMON + '/api/agent/genui/sync', {{
+          method: 'POST',
+          headers: apiHeaders(true),
+          body: JSON.stringify({{ generative_ui: state }})
+        }}).catch(() => {{}});
+      }}
     }}
 
     function parseMetricNum(s) {{
       const m = String(s ?? '').trim().match(/^(?:[$€£¥]|AUD|USD)?\\s*(-?\\d[\\d,]*(?:\\.\\d+)?)\\s*%?$/i);
       return m ? Number(m[1].replace(/,/g, '')) : Number.NaN;
-    }}
-
-    function executeEdit(entId, attrName, newVal) {{
-      const ent = state.entities.find(e => e.id === entId);
-      if (!ent) return;
-      const attr = ent.attributes.find(a => a.name === attrName);
-      if (!attr || String(attr.value) === String(newVal)) return;
-      const prevVal = attr.value;
-      undoStack.push({{ entId, attrName, prevVal, newVal }});
-      if (undoStack.length > MAX_HISTORY) undoStack.shift();
-      redoStack = [];
-      attr.value = newVal;
-      state.updated_at = Date.now();
-      recomputeSummaryBar();
-      persistState();
-      render();
-    }}
-
-    function undo() {{
-      const cmd = undoStack.pop();
-      if (!cmd) return;
-      redoStack.push(cmd);
-      const ent = state.entities.find(e => e.id === cmd.entId);
-      if (ent) {{
-        const attr = ent.attributes.find(a => a.name === cmd.attrName);
-        if (attr) attr.value = cmd.prevVal;
-      }}
-      state.updated_at = Date.now();
-      recomputeSummaryBar();
-      persistState();
-      render();
-    }}
-
-    function redo() {{
-      const cmd = redoStack.pop();
-      if (!cmd) return;
-      undoStack.push(cmd);
-      const ent = state.entities.find(e => e.id === cmd.entId);
-      if (ent) {{
-        const attr = ent.attributes.find(a => a.name === cmd.attrName);
-        if (attr) attr.value = cmd.newVal;
-      }}
-      state.updated_at = Date.now();
-      recomputeSummaryBar();
-      persistState();
-      render();
     }}
 
     function recomputeSummaryBar() {{
@@ -347,36 +344,132 @@ def build_luminara_workspace_html(
       }}
     }}
 
+    function executeEdit(entId, attrName, newVal) {{
+      const ent = state.entities.find(e => e.id === entId);
+      if (!ent) return;
+      const attr = ent.attributes.find(a => a.name === attrName);
+      if (!attr || String(attr.value) === String(newVal)) return;
+      const prevVal = attr.value;
+      undoStack.push({{ entId, attrName, prevVal, newVal }});
+      if (undoStack.length > MAX_HISTORY) undoStack.shift();
+      redoStack = [];
+      attr.value = newVal;
+      state.updated_at = Date.now();
+      recomputeSummaryBar();
+      persistState(true);
+      render();
+    }}
+
+    function undo() {{
+      const cmd = undoStack.pop();
+      if (!cmd) return;
+      redoStack.push(cmd);
+      const ent = state.entities.find(e => e.id === cmd.entId);
+      if (ent) {{
+        const attr = ent.attributes.find(a => a.name === cmd.attrName);
+        if (attr) attr.value = cmd.prevVal;
+      }}
+      state.updated_at = Date.now();
+      recomputeSummaryBar();
+      persistState(true);
+      render();
+    }}
+
+    function redo() {{
+      const cmd = redoStack.pop();
+      if (!cmd) return;
+      undoStack.push(cmd);
+      const ent = state.entities.find(e => e.id === cmd.entId);
+      if (ent) {{
+        const attr = ent.attributes.find(a => a.name === cmd.attrName);
+        if (attr) attr.value = cmd.newVal;
+      }}
+      state.updated_at = Date.now();
+      recomputeSummaryBar();
+      persistState(true);
+      render();
+    }}
+
     function allColumns() {{
       return Array.from(new Set((state.entities || []).flatMap(e => (e.attributes || []).filter(a => a.widget !== 'meta').map(a => a.name))));
     }}
 
-    function render() {{
-      syncViewTabs();
-      document.getElementById('wsTitle').textContent = state.title || 'Generative UI Workspace';
+    function getVisibleEntities() {{
       const allEntities = state.entities || [];
       const needle = searchFilter.trim().toLowerCase();
-      const entities = needle
+      const filtered = needle
         ? allEntities.filter(e => String(e.public_identifier || '').toLowerCase().includes(needle)
             || (e.attributes || []).some(a => String(a.value ?? '').toLowerCase().includes(needle) || String(a.name || '').toLowerCase().includes(needle)))
-        : allEntities;
+        : [...allEntities];
+      if (sortCol) {{
+        const valOf = e => sortCol === '__entity'
+          ? (e.public_identifier ?? '')
+          : ((e.attributes || []).find(a => a.name === sortCol)?.value ?? '');
+        filtered.sort((a, b) => {{
+          const sa = String(valOf(a));
+          const sbVal = String(valOf(b));
+          const na = parseMetricNum(sa);
+          const nb = parseMetricNum(sbVal);
+          const cmp = (!Number.isNaN(na) && !Number.isNaN(nb)) ? (na - nb) : collator.compare(sa, sbVal);
+          return (sortAsc ? 1 : -1) * cmp;
+        }});
+      }}
+      return filtered;
+    }}
+
+    function render() {{
+      syncViewTabs();
+      try {{ localStorage.setItem(KEY_VIEW, currentView); }} catch (_e) {{}}
+      const entGroup = document.getElementById('entityToolsGroup');
+      if (entGroup) entGroup.style.display = currentView === 'telemetry' ? 'none' : 'flex';
+      document.getElementById('wsTitle').textContent = currentView === 'telemetry' ? 'REA Security & Evaluation Cockpit' : (state.title || 'Generative UI Workspace');
+      const allEntities = state.entities || [];
+      const entities = getVisibleEntities();
       const kpi = document.getElementById('kpiBar');
       kpi.replaceChildren();
+
+      const root = document.getElementById('viewContainer');
+      root.replaceChildren();
+
+      if (currentView === 'telemetry') {{
+        const seqSnap = (teleSnapshot && teleSnapshot.seq) || {{}};
+        const vrtSnap = (teleSnapshot && teleSnapshot.vrt) || {{}};
+        const monCount = ((teleSnapshot && teleSnapshot.monitors) || []).length;
+        const teleKpis = [
+          ['Active Chain Blocks', teleSnapshot ? ((seqSnap.active_blocks || []).length) : '—'],
+          ['Fenced Monitors', teleSnapshot ? monCount : '—'],
+          ['VRT Baselines', teleSnapshot ? ((vrtSnap.baselines || []).length) : '—'],
+          ['Blocked Egress', teleSnapshot ? (vrtSnap.blocked_egress_count || 0) : '—']
+        ];
+        teleKpis.forEach(([label, val]) => {{
+          const d = el('div', 'kpi-card');
+          d.append(el('div', 'kpi-label', label), el('div', 'kpi-val', val));
+          kpi.appendChild(d);
+        }});
+        renderTelemetryInto(root);
+        if (!teleSnapshot && !teleLoading && !teleError) fetchTelemetryBundle(false);
+        return;
+      }}
+
       const sb = state.summary_bar;
-      const kpis = sb ? [
-        ['Entities', entities.length],
-        [sb.metric_name + ' (Min)', sb.min],
-        [sb.metric_name + ' (Avg)', sb.avg],
-        [sb.metric_name + ' (Max)', sb.max]
-      ] : [['Entities', entities.length]];
+      let kpis = [['Entities', entities.length]];
+      if (sb) {{
+        const m = sb.metric_name;
+        const vNums = entities.map(e => parseMetricNum((e.attributes || []).find(x => x.name === m)?.value)).filter(n => !Number.isNaN(n));
+        if (vNums.length) {{
+          const minV = Math.round(Math.min(...vNums) * 100) / 100;
+          const maxV = Math.round(Math.max(...vNums) * 100) / 100;
+          const avgV = Math.round((vNums.reduce((s, v) => s + v, 0) / vNums.length) * 100) / 100;
+          kpis = [['Entities', entities.length], [m + ' (Min)', minV], [m + ' (Avg)', avgV], [m + ' (Max)', maxV]];
+        }} else {{
+          kpis = [['Entities', entities.length], [m + ' (Min)', sb.min], [m + ' (Avg)', sb.avg], [m + ' (Max)', sb.max]];
+        }}
+      }}
       kpis.forEach(([label, val]) => {{
         const d = el('div', 'kpi-card');
         d.append(el('div', 'kpi-label', label), el('div', 'kpi-val', val));
         kpi.appendChild(d);
       }});
-
-      const root = document.getElementById('viewContainer');
-      root.replaceChildren();
 
       if (!allEntities.length) {{
         const empty = el('div', 'ent-card');
@@ -422,23 +515,8 @@ def build_luminara_workspace_html(
         }});
         thead.appendChild(headTr);
 
-        const sorted = [...entities];
-        if (sortCol) {{
-          const valOf = e => sortCol === '__entity'
-            ? (e.public_identifier ?? '')
-            : ((e.attributes || []).find(a => a.name === sortCol)?.value ?? '');
-          sorted.sort((a, b) => {{
-            const sa = String(valOf(a));
-            const sbVal = String(valOf(b));
-            const na = parseMetricNum(sa);
-            const nb = parseMetricNum(sbVal);
-            const cmp = (!Number.isNaN(na) && !Number.isNaN(nb)) ? (na - nb) : collator.compare(sa, sbVal);
-            return (sortAsc ? 1 : -1) * cmp;
-          }});
-        }}
-
         const tbody = document.createElement('tbody');
-        sorted.forEach(e => {{
+        entities.forEach(e => {{
           const tr = document.createElement('tr');
           const map = Object.fromEntries((e.attributes || []).map(a => [a.name, a]));
           const tdEnt = document.createElement('td');
@@ -497,10 +575,18 @@ def build_luminara_workspace_html(
       root.appendChild(grid);
     }}
 
-    document.querySelectorAll('[data-view]').forEach(btn => {{
+    const tabBtns = Array.from(document.querySelectorAll('[data-view]'));
+    tabBtns.forEach((btn, idx) => {{
       btn.addEventListener('click', () => {{
         currentView = btn.getAttribute('data-view');
         render();
+      }});
+      btn.addEventListener('keydown', e => {{
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+        e.preventDefault();
+        const nextIdx = (idx + (e.key === 'ArrowRight' ? 1 : tabBtns.length - 1)) % tabBtns.length;
+        tabBtns[nextIdx].focus();
+        tabBtns[nextIdx].click();
       }});
     }});
 
@@ -509,7 +595,7 @@ def build_luminara_workspace_html(
     window.addEventListener('keydown', e => {{
       if (e.target && e.target.matches && e.target.matches('input, textarea, select')) return;
       if (!(e.ctrlKey || e.metaKey)) return;
-      const k = e.key.toLowerCase();
+      const k = (e.key || '').toLowerCase();
       if (k === 'z' && !e.shiftKey) {{ e.preventDefault(); undo(); }}
       else if (k === 'y' || (k === 'z' && e.shiftKey)) {{ e.preventDefault(); redo(); }}
     }});
@@ -517,63 +603,104 @@ def build_luminara_workspace_html(
     document.getElementById('btnCaptureActive').onclick = async () => {{
       const btn = document.getElementById('btnCaptureActive');
       const stEl = document.getElementById('wsStatus');
-      btn.disabled = true;
-      btn.textContent = 'Capturing...';
+      if (captureAbort) {{
+        captureAbort.abort();
+        captureAbort = null;
+        return;
+      }}
+      const ctrl = new AbortController();
+      captureAbort = ctrl;
+      btn.textContent = 'STOP ■';
       stEl.classList.remove('err');
       stEl.textContent = 'Capturing structured entities from live browser tab...';
       try {{
+        await exchangePassportSession();
         const r = await fetch(DAEMON + '/api/agent/genui', {{
           method: 'POST',
           headers: apiHeaders(true),
           body: '{{}}',
-          signal: AbortSignal.timeout(12000)
+          signal: ctrl.signal
         }});
+        if (r.status === 401) document.getElementById('wsAuthBar').classList.add('visible');
         const d = await r.json().catch(() => ({{}}));
         if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
         if (d.generative_ui) {{
           state = d.generative_ui;
-          currentView = state.recommended_view || currentView;
+          currentView = state.recommended_view || 'comparison';
           undoStack = []; redoStack = [];
           persistState();
           render();
           stEl.textContent = `Captured ${{state.entity_count}} entities (${{d.receipt ? d.receipt.receipt_id : 'OK'}}).`;
         }}
       }} catch (err) {{
-        stEl.classList.add('err');
-        stEl.textContent = 'Capture failed: ' + (err.message || String(err)) + ' — Ensure Luminara Browser + Agent Daemon are running and retry.';
+        if (err && err.name === 'AbortError') {{
+          stEl.textContent = 'Capture cancelled by user.';
+        }} else {{
+          stEl.classList.add('err');
+          stEl.textContent = 'Capture failed: ' + (err.message || String(err)) + ' — Ensure Luminara Browser + Agent Daemon are running and retry.';
+        }}
       }} finally {{
+        if (captureAbort === ctrl) captureAbort = null;
         btn.disabled = false;
         btn.textContent = 'Capture Live Tab';
       }}
     }};
 
-    // Hydrate automatically from Agent Daemon only when a newer GenUI snapshot exists (supports Copilot SidePanel -> Workspace without overwriting user edits!)
-    (async () => {{
+    async function hydrateFromDaemon(force = false) {{
       try {{
+        await exchangePassportSession();
         const r = await fetch(DAEMON + '/api/agent/genui/latest', {{
           headers: apiHeaders(false),
-          signal: AbortSignal.timeout(1800)
+          signal: AbortSignal.timeout(2200)
         }});
+        if (r.status === 401) {{
+          document.getElementById('wsAuthBar').classList.add('visible');
+          return;
+        }}
         if (r.ok) {{
+          document.getElementById('wsAuthBar').classList.remove('visible');
           const d = await r.json();
           const remote = d.generative_ui;
           const localTs = Math.max(Number(state.generated_at || 0), Number(state.updated_at || 0));
-          const remoteTs = Number((remote && remote.generated_at) || 0);
-          if (remote && remote.entities && remote.entities.length && (remoteTs > localTs || !localStorage.getItem(KEY_GENUI))) {{
+          const remoteTs = Math.max(Number((remote && remote.generated_at) || 0), Number((remote && remote.updated_at) || 0));
+          if (remote && remote.entities && remote.entities.length && (force || !hadLocalGenUi || remoteTs > localTs)) {{
             state = remote;
-            currentView = state.recommended_view || currentView;
+            if (currentView !== 'telemetry') {{
+              currentView = state.recommended_view || currentView;
+            }}
             persistState();
             render();
           }}
         }}
       }} catch (_e) {{}}
-    }})();
+    }}
+
+    document.getElementById('wsAuthBar').addEventListener('submit', async e => {{
+      e.preventDefault();
+      const val = document.getElementById('wsPassportInput').value.trim();
+      if (!val) return;
+      if (/^[0-9a-f]{{64}}$/i.test(val) || val.startsWith('lum2.ui.')) {{
+        sessionTok = val;
+        try {{ sessionStorage.setItem(KEY_SS, val); }} catch (_e) {{}}
+      }} else {{
+        try {{
+          const cur = JSON.parse(localStorage.getItem(KEY_SETTINGS) || '{{}}');
+          cur.passportToken = val;
+          localStorage.setItem(KEY_SETTINGS, JSON.stringify(cur));
+        }} catch (_e) {{}}
+      }}
+      document.getElementById('wsPassportInput').value = '';
+      await exchangePassportSession(true);
+      if (currentView === 'telemetry') await fetchTelemetryBundle(false);
+      else await hydrateFromDaemon(true);
+    }});
 
     document.querySelectorAll('[data-dl]').forEach(btn => {{
       btn.addEventListener('click', () => {{
         const fmt = btn.getAttribute('data-dl');
         const cols = ['entity', ...allColumns()];
-        const rows = (state.entities || []).map(e => Object.fromEntries([
+        const visible = getVisibleEntities();
+        const rows = visible.map(e => Object.fromEntries([
           ['entity', e.public_identifier ?? ''],
           ...(e.attributes || []).filter(a => a.widget !== 'meta').map(a => [a.name, a.value ?? ''])
         ]));
@@ -620,325 +747,16 @@ def build_luminara_workspace_html(
 
     persistState();
     render();
+    hydrateFromDaemon(false);
+    {palette_iife}
   </script>
 </body>
 </html>
 """
 
 
-def write_copilot_extension(
-    ext_dir: Path,
-    profile: ForkProfile,
-    workspace_uri: str = "",
-    agent_port: int = 8796,
-    ui_key: str = "",
-) -> None:
-    """Write the built-in MV3 `luminara-copilot` Chrome Side Panel co-browsing extension."""
-    ext_dir.mkdir(parents=True, exist_ok=True)
-    if not ui_key:
-        for anc in ext_dir.resolve().parents:
-            if (anc / "forge" / "__init__.py").exists() or (anc / "outputs").exists():
-                try:
-                    from .http_base import ensure_local_ui_key
-
-                    ui_key = ensure_local_ui_key(anc)
-                except Exception:  # noqa: BLE001
-                    pass
-                break
-    icons_dir = ext_dir / "icons"
-    icons_dir.mkdir(parents=True, exist_ok=True)
-    for px in (16, 48, 128):
-        (icons_dir / f"icon{px}.png").write_bytes(make_solid_emerald_png(px))
-
-    daemon_base = f"http://127.0.0.1:{agent_port}"
-    resolved_ws_url = workspace_uri if workspace_uri.startswith("http") else f"{daemon_base}/workspace"
-
-    manifest = {
-        "manifest_version": 3,
-        "name": f"{profile.brand_name} Agent Copilot",
-        "version": "3.0.0",
-        "description": "Simultaneous Human + AI Co-Browsing Side Panel: Set-of-Marks DOM HUD, Dialog Supervisor, Generative UI, and Human Takeover.",
-        "permissions": ["sidePanel", "tabs", "activeTab", "storage"],
-        "host_permissions": [f"{daemon_base}/*"],
-        "icons": {"16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png"},
-        "content_security_policy": {
-            "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none';"
-        },
-        "background": {"service_worker": "background.js"},
-        "action": {
-            "default_title": f"Open {profile.brand_name} Copilot",
-            "default_icon": {"16": "icons/icon16.png", "48": "icons/icon48.png"},
-        },
-        "side_panel": {"default_path": "sidepanel.html"},
-    }
-    (ext_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding=ENCODING, newline="\n")
-
-    background_js = """function enableSidePanelOnClick() {
-  if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
-    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
-  }
-}
-enableSidePanelOnClick();
-chrome.runtime.onInstalled.addListener(enableSidePanelOnClick);
-chrome.runtime.onStartup.addListener(enableSidePanelOnClick);
-"""
-    (ext_dir / "background.js").write_text(background_js, encoding=ENCODING, newline="\n")
-
-    sidepanel_html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="dark light" />
-  <title>{html.escape(profile.brand_name)} Copilot</title>
-  <style>
-    :root {{
-      color-scheme: dark light;
-      --bg-0: light-dark(oklch(0.985 0.004 255), oklch(0.12 0.01 255));
-      --bg-1: light-dark(oklch(0.96 0.006 255), oklch(0.16 0.012 255));
-      --bg-2: light-dark(oklch(0.93 0.008 255), oklch(0.19 0.015 255));
-      --ink-0: light-dark(oklch(0.16 0.015 255), oklch(0.96 0.005 255));
-      --ink-1: light-dark(oklch(0.35 0.018 255), oklch(0.84 0.012 255));
-      --hairline: light-dark(oklch(0.18 0.015 255 / 0.14), oklch(1 0 0 / 0.12));
-      --accent: light-dark(oklch(0.47 0.14 162), oklch(0.75 0.16 162));
-      --warn: light-dark(oklch(0.52 0.15 65), oklch(0.82 0.14 75));
-    }}
-    * {{ box-sizing: border-box; }}
-    :focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
-    body {{
-      margin: 0; padding: 12px; background: var(--bg-0); color: var(--ink-0);
-      font: 12px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      display: grid; gap: 12px; font-variant-numeric: tabular-nums;
-    }}
-    .card {{
-      background: var(--bg-1); border: 1px solid var(--hairline);
-      border-radius: 12px; padding: 12px; display: grid; gap: 8px; min-width: 0;
-    }}
-    .kicker {{ font: 600 10px/1.2 Consolas, monospace; letter-spacing: 0.09em; text-transform: uppercase; color: var(--accent); }}
-    button {{
-      min-height: 32px;
-      padding: 8px 10px; border-radius: 8px; border: 1px solid var(--hairline);
-      background: var(--bg-2); color: var(--ink-0); font: 600 11px Consolas, monospace; cursor: pointer;
-    }}
-    button:disabled {{ opacity: 0.5; cursor: wait; }}
-    button.primary {{ border-color: color-mix(in oklch, var(--accent) 55%, transparent); background: color-mix(in oklch, var(--accent) 16%, transparent); }}
-    button.warn {{ border-color: color-mix(in oklch, var(--warn) 55%, transparent); color: var(--warn); }}
-    textarea {{
-      width: 100%; background: var(--bg-0);
-      border: 1px solid var(--hairline); border-radius: 8px; color: var(--ink-0); padding: 8px; font-size: 12px;
-    }}
-    pre {{
-      margin: 0; max-height: 220px; overflow: auto; background: var(--bg-0);
-      padding: 8px; border-radius: 8px; font: 11px/1.35 Consolas, monospace; color: var(--ink-1); white-space: pre-wrap; overflow-wrap: anywhere;
-    }}
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="kicker">● {html.escape(profile.brand_name)} Co-Presence</div>
-    <div id="connState" role="status" aria-live="polite">Connecting to Agent Daemon (:{agent_port})...</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,115px),1fr));gap:6px;">
-      <button id="btnSnap" type="button" class="primary">Index [1..N] DOM</button>
-      <button id="btnRefreshTabs" type="button">Refresh Tabs</button>
-      <button id="btnExtractMd" type="button">Extract Markdown</button>
-      <button id="btnGenUi" type="button">Page → GenUI</button>
-      <button id="btnOpenWs" type="button">Open Workspace</button>
-      <button id="btnVerifyLedger" type="button">Verify Ledger</button>
-      <button id="btnAcceptDlg" type="button">Accept Dialog</button>
-      <button id="btnDismissDlg" type="button">Dismiss Dialog</button>
-      <button id="btnClear" type="button">Clear HUD</button>
-      <button id="btnTakeover" type="button" class="warn">Human Takeover</button>
-      <button id="btnResumeHandoff" type="button" class="warn" style="display:none;">Resume Handoff ↻</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <label class="kicker" for="goalBox">Autonomous Tab Goal</label>
-    <textarea id="goalBox" rows="3" placeholder="e.g. Type 'Quantum' and click Apply Filter..."></textarea>
-    <button id="btnRunGoal" type="button" class="primary">Run Goal on Live Window ↵</button>
-  </div>
-
-  <div class="card">
-    <div class="kicker">Live Telemetry &amp; LUM-* Receipt</div>
-    <pre id="outLog" role="status" aria-live="polite">Ready. Human + AI share this window simultaneously.</pre>
-  </div>
-
-  <script src="sidepanel.js"></script>
-</body>
-</html>
-"""
-    (ext_dir / "sidepanel.html").write_text(sidepanel_html, encoding=ENCODING, newline="\n")
-
-    sidepanel_js = f"""const DAEMON = {_js_json(daemon_base)};
-const WORKSPACE_URL = {_js_json(resolved_ws_url)};
-const SLUG = {_js_json(profile.slug)};
-const UI_KEY = {_js_json(ui_key)};
-const logEl = document.getElementById('outLog');
-const connEl = document.getElementById('connState');
-
-async function callDaemon(path, body, timeoutMs = 15000, customSignal = null) {{
-  const isPost = body !== undefined;
-  const headers = {{}};
-  if (UI_KEY) headers['X-Luminara-UI-Key'] = UI_KEY;
-  if (isPost) headers['Content-Type'] = 'application/json';
-  const r = await fetch(DAEMON + path, {{
-    method: isPost ? 'POST' : 'GET',
-    headers,
-    body: isPost ? JSON.stringify(body) : undefined,
-    signal: customSignal || AbortSignal.timeout(timeoutMs)
-  }});
-  const data = await r.json().catch(() => ({{}}));
-  if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
-  return data;
-}}
-
-async function runAction(btn, busyText, fn) {{
-  const orig = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = busyText;
-  try {{
-    await fn();
-  }} catch (err) {{
-    logEl.textContent = 'Error: ' + (err.message || String(err)) + '\\nEnsure Launch-' + SLUG + '.cmd is running.';
-  }} finally {{
-    btn.disabled = false;
-    btn.textContent = orig;
-  }}
-}}
-
-let pendingHandoffRunId = null;
-
-async function openAuthenticatedWorkspace() {{
-  let targetUrl = WORKSPACE_URL;
-  try {{
-    const tokRes = await callDaemon('/api/agent/session-token', {{ scope: 'ui', ttl_sec: 900 }});
-    if (tokRes && tokRes.token) targetUrl = WORKSPACE_URL + '#lum_tok=' + encodeURIComponent(tokRes.token);
-  }} catch (_e) {{}}
-  if (chrome.tabs) chrome.tabs.create({{ url: targetUrl }});
-}}
-
-async function ping() {{
-  try {{
-    const st = await callDaemon('/api/agent/status', undefined, 2500);
-    connEl.textContent = `Daemon LIVE · ${{st.open_tabs}} shared tab(s) · CDP ${{st.cdp_connected ? 'OK' : 'wait'}}`;
-    const handoffs = st.active_handoffs || [];
-    pendingHandoffRunId = handoffs.length ? handoffs[0].run_id : null;
-    const btnRes = document.getElementById('btnResumeHandoff');
-    if (btnRes) btnRes.style.display = pendingHandoffRunId ? 'inline-block' : 'none';
-  }} catch (_e) {{
-    connEl.textContent = 'Daemon offline — launch via Launch-' + SLUG + '.cmd';
-  }}
-}}
-
-const btnSnap = document.getElementById('btnSnap');
-btnSnap.onclick = () => runAction(btnSnap, 'Indexing...', async () => {{
-  const res = await callDaemon('/api/agent/snapshot', {{ show_badges: true, include_frames: true, agent_id: 'sidepanel-copilot' }});
-  logEl.textContent = JSON.stringify(res, null, 2);
-}});
-
-const btnRefreshTabs = document.getElementById('btnRefreshTabs');
-btnRefreshTabs.onclick = () => runAction(btnRefreshTabs, 'Refreshing...', async () => {{
-  const res = await callDaemon('/api/agent/tabs');
-  logEl.textContent = JSON.stringify(res, null, 2);
-}});
-
-const btnExtractMd = document.getElementById('btnExtractMd');
-btnExtractMd.onclick = () => runAction(btnExtractMd, 'Extracting...', async () => {{
-  const res = await callDaemon('/api/agent/extract', {{ format: 'md' }});
-  logEl.textContent = res.formatted || JSON.stringify(res, null, 2);
-}});
-
-const btnOpenWs = document.getElementById('btnOpenWs');
-btnOpenWs.onclick = () => runAction(btnOpenWs, 'Opening...', async () => {{
-  await openAuthenticatedWorkspace();
-}});
-
-const btnVerifyLedger = document.getElementById('btnVerifyLedger');
-btnVerifyLedger.onclick = () => runAction(btnVerifyLedger, 'Verifying...', async () => {{
-  const res = await callDaemon('/api/agent/ledger/verify');
-  logEl.textContent = JSON.stringify(res, null, 2);
-}});
-
-const btnAcceptDlg = document.getElementById('btnAcceptDlg');
-btnAcceptDlg.onclick = () => runAction(btnAcceptDlg, 'Accepting...', async () => {{
-  const res = await callDaemon('/api/agent/dialog', {{ action: 'accept', agent_id: 'sidepanel-copilot' }});
-  logEl.textContent = JSON.stringify(res, null, 2);
-}});
-
-const btnDismissDlg = document.getElementById('btnDismissDlg');
-btnDismissDlg.onclick = () => runAction(btnDismissDlg, 'Dismissing...', async () => {{
-  const res = await callDaemon('/api/agent/dialog', {{ action: 'dismiss', agent_id: 'sidepanel-copilot' }});
-  logEl.textContent = JSON.stringify(res, null, 2);
-}});
-
-const btnClear = document.getElementById('btnClear');
-btnClear.onclick = () => runAction(btnClear, 'Clearing...', async () => {{
-  const res = await callDaemon('/api/agent/act', {{ action: 'clear_hud' }});
-  logEl.textContent = JSON.stringify(res, null, 2);
-}});
-
-const btnTakeover = document.getElementById('btnTakeover');
-btnTakeover.onclick = () => runAction(btnTakeover, 'Preempting...', async () => {{
-  const res = await callDaemon('/api/agent/act', {{ action: 'human_takeover' }});
-  logEl.textContent = 'Human preempted lease:\\n' + JSON.stringify(res, null, 2);
-}});
-
-const btnResumeHandoff = document.getElementById('btnResumeHandoff');
-btnResumeHandoff.onclick = () => runAction(btnResumeHandoff, 'Resuming...', async () => {{
-  if (!pendingHandoffRunId) {{
-    logEl.textContent = 'No active PAUSED_HUMAN_HANDOFF run to resume.';
-    return;
-  }}
-  const res = await callDaemon('/api/agent/handoff/resume', {{ run_id: pendingHandoffRunId }}, 35000);
-  logEl.textContent = JSON.stringify(res, null, 2);
-  await ping();
-}});
-
-const btnGenUi = document.getElementById('btnGenUi');
-btnGenUi.onclick = () => runAction(btnGenUi, 'Capturing...', async () => {{
-  const res = await callDaemon('/api/agent/genui', {{}});
-  logEl.textContent = `Synthesized ${{res.generative_ui ? res.generative_ui.entity_count : 0}} entities.\\nReceipt: ${{res.receipt ? res.receipt.receipt_id : ''}}`;
-  await openAuthenticatedWorkspace();
-}});
-
-const btnRunGoal = document.getElementById('btnRunGoal');
-let activeGoalAbort = null;
-btnRunGoal.onclick = async () => {{
-  if (activeGoalAbort) {{
-    activeGoalAbort.abort();
-    activeGoalAbort = null;
-    logEl.textContent = 'Goal cancelled by user.';
-    return;
-  }}
-  const goalBox = document.getElementById('goalBox');
-  const goal = goalBox.value.trim();
-  if (!goal) {{
-    goalBox.focus();
-    logEl.textContent = 'Enter a goal instruction above before clicking Run Goal.';
-    return;
-  }}
-  const orig = btnRunGoal.textContent;
-  activeGoalAbort = new AbortController();
-  btnRunGoal.textContent = 'STOP ■';
-  logEl.textContent = 'Executing perceive -> decide -> act...';
-  try {{
-    const res = await callDaemon('/api/agent/goal', {{ goal, agent_id: 'sidepanel-copilot' }}, 35000, activeGoalAbort.signal);
-    if (res && res.status === 'PAUSED_HUMAN_HANDOFF' && res.run_id) {{
-      pendingHandoffRunId = res.run_id;
-      btnResumeHandoff.style.display = 'inline-block';
-    }}
-    logEl.textContent = JSON.stringify(res, null, 2);
-  }} catch (err) {{
-    if (err && err.name !== 'AbortError') {{
-      logEl.textContent = 'Error: ' + (err.message || String(err));
-    }}
-  }} finally {{
-    activeGoalAbort = null;
-    btnRunGoal.textContent = orig;
-  }}
-}};
-
-ping();
-setInterval(ping, 4000);
-"""
-    (ext_dir / "sidepanel.js").write_text(sidepanel_js, encoding=ENCODING, newline="\n")
+__all__ = [
+    "build_luminara_workspace_html",
+    "make_solid_emerald_png",
+    "write_copilot_extension",
+]

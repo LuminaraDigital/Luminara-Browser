@@ -150,6 +150,16 @@ def verify_patches_against_upstream(
     """Validate Luminara patch syntax and anchor target presence against `vendor/chromium-src`."""
     patches_dir = patches_dir.resolve()
     chromium_src_dir = chromium_src_dir.resolve()
+    src_ready = (chromium_src_dir / ".git").exists()
+    if not patches_dir.is_dir():
+        return {
+            "ok": False,
+            "patch_count": 0,
+            "chromium_src_available": src_ready,
+            "error": f"Patches directory not found: {patches_dir}",
+            "results": [],
+        }
+
     series_path = patches_dir / "series"
     patch_files: list[Path] = []
     if series_path.exists():
@@ -160,7 +170,15 @@ def verify_patches_against_upstream(
     else:
         patch_files = sorted(patches_dir.glob("*.patch"))
 
-    src_ready = (chromium_src_dir / ".git").exists()
+    if not patch_files:
+        return {
+            "ok": False,
+            "patch_count": 0,
+            "chromium_src_available": src_ready,
+            "error": f"No patch files found in {patches_dir}",
+            "results": [],
+        }
+
     results: list[dict[str, Any]] = []
     all_ok = True
     for pf in patch_files:
@@ -171,19 +189,24 @@ def verify_patches_against_upstream(
         text = pf.read_text(encoding=ENCODING)
         try:
             parsed = parse_unified_diff(text, source_name=pf.name)
-            targets = [fp.new_path if fp.new_path != "/dev/null" else fp.old_path for fp in parsed]
-            upstream_hits = [t for t in targets if (chromium_src_dir / t).exists()]
+            targets = [fp.target_relpath for fp in parsed]
+            existing_targets = [fp.target_relpath for fp in parsed if not fp.is_added]
+            upstream_hits = [t for t in existing_targets if (chromium_src_dir / t).exists()]
             hunks_verified = src_ready
             hunk_errors: list[str] = []
             if src_ready:
-                if len(upstream_hits) != len(targets):
+                if len(upstream_hits) != len(existing_targets):
                     hunks_verified = False
                     all_ok = False
                     hunk_errors.append("missing_target_in_sparse_checkout")
                 else:
                     files_map = {
-                        t: (chromium_src_dir / t).read_text(encoding=ENCODING).splitlines()
-                        for t in targets
+                        fp.target_relpath: (
+                            []
+                            if fp.is_added
+                            else (chromium_src_dir / fp.target_relpath).read_text(encoding=ENCODING).splitlines()
+                        )
+                        for fp in parsed
                     }
                     try:
                         apply_patch_in_memory(files_map, text, source_name=pf.name)

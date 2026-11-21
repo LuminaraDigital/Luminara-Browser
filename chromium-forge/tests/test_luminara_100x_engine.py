@@ -330,6 +330,8 @@ class TestLuminara100xEngine(unittest.TestCase):
     def test_11_mcp_v2_server_exposes_all_20_tools_and_100x_benchmarks_pass(self) -> None:
         with tempfile.TemporaryDirectory(prefix="lum_t100_srv_") as td:
             runtime = LuminaraAgentRuntime(Path(td), cdp_port=65527)
+            runtime.passport_token = ""
+            runtime.goals.router.use_env_providers = False
             srv = create_agent_http_server(runtime, host="127.0.0.1", port=0)
             port = srv.server_port
             th = threading.Thread(target=srv.serve_forever, daemon=True)
@@ -359,7 +361,7 @@ class TestLuminara100xEngine(unittest.TestCase):
                 # 2. Verify status + session-token + workspaces REST routes
                 with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/agent/status", timeout=5.0) as resp:
                     st = json.loads(resp.read().decode("utf-8"))
-                self.assertEqual(st["version"], "3.0.0")
+                self.assertEqual(st["version"], "3.1.0")
                 self.assertIn("cdp_mux", st)
                 self.assertIn("vault_encryption", st)
 
@@ -567,6 +569,8 @@ class TestLuminara100xEngine(unittest.TestCase):
                 stderr=subprocess.DEVNULL,
             )
             rt = LuminaraAgentRuntime(work / "state", cdp_port=cdp_port)
+            rt.passport_token = ""
+            rt.goals.router.use_env_providers = False
             ag_srv = create_agent_http_server(rt, host="127.0.0.1", port=0)
             ag_port = ag_srv.server_port
             threading.Thread(target=ag_srv.serve_forever, daemon=True).start()
@@ -670,7 +674,7 @@ class TestLuminara100xEngine(unittest.TestCase):
                 # 7. Verify luminara_ctl CLI subcommands against live daemon!
                 ctl_script = REPO_ROOT / "skills" / "luminara-browser" / "scripts" / "luminara_ctl.py"
                 import os as _os
-                ctl_env = {**_os.environ, "LUMINARA_AGENT_URL": f"http://127.0.0.1:{ag_port}"}
+                ctl_env = {**_os.environ, "LUMINARA_AGENT_URL": f"http://127.0.0.1:{ag_port}", "LUMINARA_AGENT_TOKEN": ""}
                 for ctl_args in (
                     ["status"],
                     ["webmcp-list", "--target-id", main_tid],
@@ -740,6 +744,8 @@ class TestLuminara100xEngine(unittest.TestCase):
 
             # 4. Malformed bulk urls string rejection, null integer handling, & TabLease on 100x tools
             rt = LuminaraAgentRuntime(root, cdp_port=65532)
+            rt.passport_token = ""
+            rt.goals.router.use_env_providers = False
             try:
                 with self.assertRaises(ValueError):
                     rt.dispatch_tool("browser_bulk_extract", {"urls": "https://example.com"})
@@ -776,7 +782,7 @@ class TestLuminara100xEngine(unittest.TestCase):
                     cp = subprocess.run(
                         [sys.executable, str(ctl_script), "workspaces", "--action", "index", "--workspace-id", "audit", "--url", "https://example.com", "--title", "Audit", "--stdin"],
                         input='[{"vendor":"Luminara","tier":"Enterprise"}]',
-                        env={**_os.environ, "LUMINARA_AGENT_URL": f"http://127.0.0.1:{ag_port}"},
+                        env={**_os.environ, "LUMINARA_AGENT_URL": f"http://127.0.0.1:{ag_port}", "LUMINARA_AGENT_TOKEN": ""},
                         capture_output=True,
                         text=True,
                         timeout=10,

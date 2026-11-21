@@ -10,19 +10,12 @@ Production-hardened Luminara Command Deck (`newtab.html`):
 from __future__ import annotations
 
 import html
-import json
 
-from .luminara_workspace_ui import (
-    build_luminara_workspace_html,
-    write_copilot_extension,
-)
+from .luminara_copilot_ext import SHARED_UI_TOKENS_CSS, _js_json, build_palette_js, write_copilot_extension
+from .luminara_workspace_ui import build_luminara_workspace_html
 from .models import ForkProfile
 
 ENCODING = "utf-8"
-
-
-def _js_json(val: object) -> str:
-    return json.dumps(val, ensure_ascii=False).replace("</", "<\\/")
 
 
 def build_luminara_newtab_html(
@@ -36,6 +29,7 @@ def build_luminara_newtab_html(
     brand_esc = html.escape(profile.brand_name)
     eng_esc = html.escape(engine.name)
     daemon_base = f"http://127.0.0.1:{agent_port}"
+    palette_iife = build_palette_js(engine.search_url, agent_port=agent_port)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -45,176 +39,77 @@ def build_luminara_newtab_html(
   <meta name="color-scheme" content="dark light" />
   <title>{brand_esc} — Agentic Command Deck</title>
   <style>
-    :root {{
-      color-scheme: dark light;
-      --bg-0: light-dark(oklch(0.975 0.005 255), oklch(0.115 0.012 255));
-      --bg-1: light-dark(oklch(0.95 0.007 255), oklch(0.15 0.013 255));
-      --bg-2: light-dark(oklch(0.915 0.009 255), oklch(0.188 0.015 255));
-      --ink-0: light-dark(oklch(0.15 0.015 255), oklch(0.965 0.005 255));
-      --ink-1: light-dark(oklch(0.34 0.015 255), oklch(0.78 0.012 255));
-      --ink-2: light-dark(oklch(0.44 0.015 255), oklch(0.67 0.012 255));
-      --accent: light-dark(oklch(0.48 0.15 162), oklch(0.75 0.16 162));
-      --amber: light-dark(oklch(0.52 0.15 72), oklch(0.79 0.15 78));
-      --danger: light-dark(oklch(0.50 0.19 26), oklch(0.68 0.18 25));
-      --hairline: light-dark(oklch(0.15 0.01 255 / 0.12), oklch(1 0 0 / 0.09));
-      --specular: inset 0 1px 0 0 oklch(1 0 0 / 0.1);
-      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
-    }}
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    :focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
-    .sr-only {{
-      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
-      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
-    }}
+{SHARED_UI_TOKENS_CSS}
     body {{
-      min-height: 100dvh;
-      background:
-        radial-gradient(920px 420px at 50% -5%, color-mix(in oklch, var(--accent) 10%, transparent), transparent 70%),
-        var(--bg-0);
-      color: var(--ink-0);
-      font-family: var(--font-sans);
-      padding: clamp(0.85rem, 2.4vw, 2rem);
-      display: flex;
-      flex-direction: column;
-      gap: 20px;
-      -webkit-font-smoothing: antialiased;
+      min-height: 100dvh; color: var(--ink-0); font-family: var(--font-sans);
+      background: radial-gradient(920px 420px at 50% -5%, color-mix(in oklch, var(--accent) 10%, transparent), transparent 70%), var(--bg-0);
+      padding: clamp(0.85rem, 2.4vw, 2rem); display: flex; flex-direction: column; gap: 20px; -webkit-font-smoothing: antialiased;
     }}
     header, footer {{
-      max-width: 1240px; width: 100%; margin: 0 auto;
-      display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;
-      font-family: var(--font-mono); font-size: 12px; color: var(--ink-2);
-      font-variant-numeric: tabular-nums;
+      max-width: 1240px; width: 100%; margin: 0 auto; display: flex; justify-content: space-between;
+      align-items: center; flex-wrap: wrap; gap: 12px; font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums;
     }}
     .pill {{
-      display: inline-flex; align-items: center; gap: 8px; min-width: 0;
-      padding: 6px 12px; border-radius: 999px;
-      background: var(--bg-1); border: 1px solid var(--hairline); box-shadow: var(--specular);
-      color: var(--ink-1); font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase;
+      display: inline-flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 12px; border-radius: 999px;
+      background: var(--bg-1); border: 1px solid var(--hairline); box-shadow: var(--specular); color: var(--ink-1); font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase;
     }}
     .dot {{ width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: var(--accent); box-shadow: 0 0 9px var(--accent); }}
     .dot.offline {{ background: var(--amber); box-shadow: 0 0 9px var(--amber); }}
-    .nav-actions {{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }}
+    .nav-actions, .mode-bar, .subtabs, .todo-form {{ display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }}
     .btn-ghost {{
-      min-height: 30px; min-width: 30px;
-      padding: 6px 12px; border-radius: 10px; border: 1px solid var(--hairline);
-      background: var(--bg-1); color: var(--ink-0); text-decoration: none;
-      font-family: var(--font-mono); font-size: 11px; cursor: pointer;
-      display: inline-flex; align-items: center; justify-content: center;
+      min-height: 30px; min-width: 30px; padding: 6px 12px; border-radius: 10px; border: 1px solid var(--border-control);
+      background: var(--bg-1); color: var(--ink-0); text-decoration: none; font-family: var(--font-mono); font-size: 11px;
+      cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
       transition: border-color 150ms cubic-bezier(0.16, 1, 0.3, 1), transform 120ms ease;
     }}
     .btn-ghost:hover:not(:disabled) {{ border-color: var(--accent); transform: translateY(-1px); }}
     .btn-ghost.active {{ border-color: var(--accent); color: var(--accent); background: var(--bg-2); }}
     .btn-ghost:disabled {{ opacity: 0.5; cursor: wait; }}
-    main {{
-      max-width: 1240px; width: 100%; margin: 0 auto;
-      display: grid; gap: 18px; flex: 1; min-width: 0;
-    }}
+    main {{ max-width: 1240px; width: 100%; margin: 0 auto; display: grid; gap: 18px; flex: 1; min-width: 0; }}
     .hero {{ display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 12px; }}
-    .kicker {{
-      font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.11em;
-      text-transform: uppercase; color: var(--accent); margin-bottom: 6px;
-    }}
-    h1 {{
-      font-size: clamp(1.75rem, 3.5vw, 2.8rem);
-      letter-spacing: -0.04em; line-height: 1.05; text-wrap: balance;
-    }}
+    .kicker {{ font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.11em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px; }}
+    h1 {{ font-size: clamp(1.75rem, 3.5vw, 2.8rem); letter-spacing: -0.04em; line-height: 1.05; text-wrap: balance; }}
     .omnibox {{
-      background: var(--bg-1); border: 1px solid var(--hairline);
-      box-shadow: var(--specular), 0 18px 42px oklch(0 0 0 / 0.2);
+      background: var(--bg-1); border: 1px solid var(--hairline); box-shadow: var(--specular), 0 18px 42px oklch(0 0 0 / 0.2);
       border-radius: 20px; padding: 10px; display: grid; gap: 10px; min-width: 0;
     }}
-    .mode-bar {{ display: flex; gap: 6px; flex-wrap: wrap; }}
     .mode-tab {{
-      min-height: 32px;
-      padding: 6px 12px; border-radius: 10px; border: 1px solid transparent;
-      background: transparent; color: var(--ink-1); font-family: var(--font-mono);
-      font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer;
+      min-height: 32px; padding: 6px 12px; border-radius: 10px; border: 1px solid transparent;
+      background: transparent; color: var(--ink-1); font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer;
     }}
-    .mode-tab.active {{
-      background: var(--bg-2); color: var(--accent); border-color: color-mix(in oklch, var(--accent) 45%, transparent);
-    }}
+    .mode-tab.active {{ background: var(--bg-2); color: var(--accent); border-color: color-mix(in oklch, var(--accent) 45%, transparent); }}
     .omni-row {{ display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }}
-    .omni-input {{
-      flex: 1 1 220px; min-width: 0; background: var(--bg-2); border: 1px solid var(--hairline);
-      border-radius: 10px; color: var(--ink-0); font-size: 15px; padding: 11px 14px;
-    }}
+    .omni-input {{ flex: 1 1 220px; min-width: 0; background: var(--bg-2); border: 1px solid var(--border-control); border-radius: 10px; color: var(--ink-0); font-size: 15px; padding: 11px 14px; }}
     .btn-primary {{
-      min-height: 42px;
-      padding: 10px 18px; border-radius: 10px; border: 1px solid var(--accent);
-      background: color-mix(in oklch, var(--accent) 18%, transparent); color: var(--ink-0);
-      font-family: var(--font-mono); font-size: 12px; font-weight: 600; cursor: pointer;
-      white-space: nowrap;
+      min-height: 42px; padding: 10px 18px; border-radius: 10px; border: 1px solid var(--accent);
+      background: color-mix(in oklch, var(--accent) 18%, transparent); color: var(--ink-0); font-family: var(--font-mono); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
     }}
-    .btn-primary.stop {{
-      border-color: var(--danger);
-      background: color-mix(in oklch, var(--danger) 20%, transparent);
-    }}
+    .btn-primary.stop {{ border-color: var(--danger); background: color-mix(in oklch, var(--danger) 20%, transparent); }}
     .handoff-banner {{
-      display: none; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
-      padding: 12px 16px; border-radius: 14px;
-      background: color-mix(in oklch, var(--amber) 15%, transparent);
-      border: 1px solid color-mix(in oklch, var(--amber) 50%, transparent);
-      color: var(--ink-0); font-size: 13px;
+      display: none; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 12px 16px; border-radius: 14px;
+      background: color-mix(in oklch, var(--amber) 15%, transparent); border: 1px solid color-mix(in oklch, var(--amber) 50%, transparent); color: var(--ink-0); font-size: 13px;
     }}
     .handoff-banner.visible {{ display: flex; }}
     .bento {{ display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; min-width: 0; }}
-    .card {{
-      background: var(--bg-1); border: 1px solid var(--hairline);
-      box-shadow: var(--specular); border-radius: 16px; padding: 16px;
-      display: flex; flex-direction: column; gap: 12px; min-width: 0;
-    }}
+    .card {{ background: var(--bg-1); border: 1px solid var(--hairline); box-shadow: var(--specular); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }}
     .span-7 {{ grid-column: span 7; }}
     .span-5 {{ grid-column: span 5; }}
     @media (max-width: 900px) {{ .span-7, .span-5 {{ grid-column: span 12; }} }}
     .card-head {{ display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }}
-    .card-title {{
-      font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em;
-      text-transform: uppercase; color: var(--ink-2);
-    }}
+    .card-title {{ font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2); }}
     .list-scroll {{ display: grid; gap: 8px; max-height: 240px; overflow-y: auto; min-width: 0; }}
-    .row-item {{
-      display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;
-      padding: 9px 11px; border-radius: 10px; background: var(--bg-2);
-      border: 1px solid var(--hairline); font-size: 13px; min-width: 0;
-    }}
-    .mono, code {{
-      font-family: var(--font-mono); font-size: 11px; color: var(--ink-2);
-      font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
-    }}
-    .lease-tag {{
-      font-family: var(--font-mono); font-size: 10px; padding: 3px 8px; border-radius: 999px;
-      background: color-mix(in oklch, var(--accent) 18%, transparent); color: var(--accent);
-    }}
-    .subtabs {{ display: flex; gap: 6px; flex-wrap: wrap; }}
-    .todo-form {{ display: flex; gap: 6px; flex-wrap: wrap; }}
-    .todo-input {{
-      flex: 1 1 140px; min-width: 0; background: var(--bg-2); border: 1px solid var(--hairline);
-      border-radius: 10px; padding: 8px 10px; color: var(--ink-0); font-size: 13px;
-    }}
-    .todo-select {{
-      background: var(--bg-2); border: 1px solid var(--hairline);
-      border-radius: 10px; padding: 8px; color: var(--ink-1); font-family: var(--font-mono); font-size: 11px;
-    }}
+    .row-item {{ display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; padding: 9px 11px; border-radius: 10px; background: var(--bg-2); border: 1px solid var(--hairline); font-size: 13px; min-width: 0; }}
+    .mono, code {{ font-family: var(--font-mono); font-size: 11px; color: var(--ink-2); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }}
+    .lease-tag {{ font-family: var(--font-mono); font-size: 10px; padding: 3px 8px; border-radius: 999px; background: color-mix(in oklch, var(--accent) 18%, transparent); color: var(--accent); }}
+    .todo-input {{ flex: 1 1 140px; min-width: 0; background: var(--bg-2); border: 1px solid var(--border-control); border-radius: 10px; padding: 8px 10px; color: var(--ink-0); font-size: 13px; }}
+    .todo-select {{ background: var(--bg-2); border: 1px solid var(--border-control); border-radius: 10px; padding: 8px; color: var(--ink-1); font-family: var(--font-mono); font-size: 11px; }}
     .progress-track {{ height: 5px; background: var(--bg-2); border-radius: 999px; overflow: hidden; }}
     .progress-fill {{ height: 100%; background: var(--accent); width: 0%; transition: width 220ms cubic-bezier(0.16, 1, 0.3, 1); }}
     .todo-done {{ text-decoration: line-through; color: var(--ink-2); }}
-    .prio-high {{ color: var(--danger); }}
-    .prio-medium {{ color: var(--amber); }}
-    .prio-low {{ color: var(--accent); }}
-    .toast-tray {{
-      position: fixed; right: 16px; bottom: 16px; z-index: 9999;
-      display: grid; gap: 8px; max-width: min(360px, calc(100vw - 32px));
-    }}
-    .toast {{
-      background: var(--bg-2); border: 1px solid var(--accent);
-      box-shadow: 0 14px 32px oklch(0 0 0 / 0.35); border-radius: 12px;
-      padding: 10px 14px; font-size: 12px; color: var(--ink-0);
-      display: flex; justify-content: space-between; align-items: center; gap: 10px;
-    }}
-    @media (prefers-reduced-motion: reduce) {{
-      *, *::before, *::after {{ transition: none !important; animation: none !important; }}
-    }}
+    .prio-high {{ color: var(--danger); }} .prio-medium {{ color: var(--amber); }} .prio-low {{ color: var(--accent); }}
+    .toast-tray {{ position: fixed; right: 16px; bottom: 16px; z-index: 9999; display: grid; gap: 8px; max-width: min(360px, calc(100vw - 32px)); }}
+    .toast {{ background: var(--bg-2); border: 1px solid var(--accent); box-shadow: 0 14px 32px oklch(0 0 0 / 0.35); border-radius: 12px; padding: 10px 14px; font-size: 12px; color: var(--ink-0); display: flex; justify-content: space-between; align-items: center; gap: 10px; }}
+    @media (prefers-reduced-motion: reduce) {{ *, *::before, *::after {{ transition: none !important; animation: none !important; }} }}
   </style>
 </head>
 <body>
@@ -247,6 +142,17 @@ def build_luminara_newtab_html(
       <button class="btn-primary" type="button" id="btnResumeHandoff">Resume Agent ↵</button>
     </div>
 
+    <div class="handoff-banner" id="mutationBanner" role="status" aria-live="polite">
+      <div style="min-width:0;overflow-wrap:anywhere;">
+        <strong>PAUSED_MUTATION_APPROVAL:</strong>
+        <span id="mutationText">Network Mutation Firewall intercepted a mutating HTTP request.</span>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn-primary" type="button" id="btnApproveMutation">Approve ✓</button>
+        <button class="btn-primary stop" type="button" id="btnRejectMutation">Reject ✕</button>
+      </div>
+    </div>
+
     <form class="omnibox" id="omniForm">
       <div class="mode-bar" role="tablist" aria-label="Omnibox Execution Mode">
         <button class="mode-tab active" type="button" role="tab" aria-selected="true" data-mode="search">🔍 Private Search ({eng_esc})</button>
@@ -268,15 +174,15 @@ def build_luminara_newtab_html(
           <button class="btn-ghost" type="button" id="btnRefreshDaemon">Sync Live CDP</button>
         </div>
         <div class="list-scroll" id="liveTabsList">
-          <div class="row-item"><span class="mono">Connecting to Agent Daemon (`:{agent_port}`)...</span></div>
+          <div class="row-item"><span class="mono">Connecting to Agent Daemon (<code>:{agent_port}</code>)...</span></div>
         </div>
 
         <div class="card-head" style="margin-top: 6px;">
-          <span class="card-title">Verifiable Action Ledger (`LUM-*` SHA-256 Chain)</span>
+          <span class="card-title">Verifiable Action Ledger (<code>LUM-*</code> SHA-256 Chain)</span>
           <span class="mono" id="receiptCount">0 receipts</span>
         </div>
         <div class="list-scroll" id="receiptsList">
-          <div class="row-item"><span class="mono">No `LUM-*` receipts recorded yet.</span></div>
+          <div class="row-item"><span class="mono">No <code>LUM-*</code> receipts recorded yet.</span></div>
         </div>
       </section>
 
@@ -313,7 +219,7 @@ def build_luminara_newtab_html(
             <input class="todo-input" id="cfgOperator" style="max-width:160px;" autocomplete="nickname" placeholder="Luminara" />
           </label>
           <label class="row-item" for="cfgShowHud">
-            <span>Show `[1..N]` Set-of-Marks HUD on Agent Snapshots</span>
+            <span>Show <code>[1..N]</code> Set-of-Marks HUD on Agent Snapshots</span>
             <input type="checkbox" id="cfgShowHud" checked />
           </label>
           <label class="row-item" for="cfgPassport">
@@ -330,8 +236,28 @@ def build_luminara_newtab_html(
         <div id="pane-vault" style="display:none; gap:8px;">
           <div class="row-item">
             <span class="mono" id="vaultSummaryLbl">Loading DPAPI Vault &amp; Domain Playbooks...</span>
-            <button class="btn-ghost" type="button" id="btnSyncVault">Refresh</button>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button class="btn-ghost" type="button" id="btnToggleVaultForm">+ Add Credential</button>
+              <button class="btn-ghost" type="button" id="btnSyncVault">Refresh</button>
+            </div>
           </div>
+          <form id="vaultRegForm" style="display:none; gap:6px; padding:10px; border-radius:10px; background:var(--bg-2); border:1px solid var(--hairline);">
+            <label class="sr-only" for="vltOrigin">Vault origin URL</label>
+            <input class="todo-input" id="vltOrigin" type="url" placeholder="Origin (e.g. https://portal.example.com)" required />
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <label class="sr-only" for="vltUser">Vault username</label>
+              <input class="todo-input" id="vltUser" type="text" placeholder="Username / Email" autocomplete="off" />
+              <label class="sr-only" for="vltId">Vault handle ID</label>
+              <input class="todo-input" id="vltId" type="text" placeholder="Handle ID (optional)" autocomplete="off" />
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <label class="sr-only" for="vltPass">Vault password</label>
+              <input class="todo-input" id="vltPass" type="password" placeholder="Password (DPAPI/AEAD sealed)" autocomplete="new-password" />
+              <label class="sr-only" for="vltTotp">Vault TOTP secret</label>
+              <input class="todo-input" id="vltTotp" type="password" placeholder="Base32 / otpauth:// TOTP (optional)" autocomplete="off" />
+            </div>
+            <button class="btn-primary" type="submit">Seal Origin-Bound Credential</button>
+          </form>
           <div class="list-scroll" id="vaultPlaybookList">
             <div class="row-item"><span class="mono">Syncing origin-pinned handles...</span></div>
           </div>
@@ -339,7 +265,7 @@ def build_luminara_newtab_html(
 
         <div id="pane-mcp" style="display:none; gap:8px;">
           <div class="row-item" style="display:block;">
-            <div class="mono" style="margin-bottom:4px;">MCP v2 JSON-RPC (`2025-06-18` · 20 Tools · 7 Resources)</div>
+            <div class="mono" style="margin-bottom:4px;">MCP v2 JSON-RPC (<code>2025-06-18</code> · 28 Tools · 9 Resources)</div>
             <code>POST {daemon_base}/api/agent/mcp</code>
           </div>
           <div class="row-item" style="display:block;">
@@ -347,7 +273,7 @@ def build_luminara_newtab_html(
             <code>GET {daemon_base}/llms.txt</code><br />
             <code>GET {daemon_base}/.well-known/agent.json</code>
           </div>
-          <div class="mono">Compatible with any standard MCP v2 (`2025-06-18`) agent client.</div>
+          <div class="mono">Compatible with any standard MCP v2 (<code>2025-06-18</code>) agent client.</div>
         </div>
       </section>
     </div>
@@ -361,19 +287,24 @@ def build_luminara_newtab_html(
   <div class="toast-tray" id="toastTray" aria-live="polite"></div>
 
   <script>
-    const DAEMON = {_js_json(daemon_base)};
+    const DAEMON = (/^https?:$/i.test(location.protocol) && /^(127\\.0\\.0\\.1|localhost|\\[::1\\])$/i.test(location.hostname))
+      ? location.origin
+      : {_js_json(daemon_base)};
     const BRAND = {_js_json(profile.brand_name)};
     const SLUG = {_js_json(profile.slug)};
     const SEARCH_TPL = {_js_json(engine.search_url)};
     const SWITCHES = {_js_json(profile.runtime_switches())};
     const WORKSPACE_URI = {_js_json(workspace_uri)};
     const UI_KEY = {_js_json(ui_key)};
+    const COBROWSE_ENABLED = {_js_json(bool(profile.enable_agent_cobrowsing))};
     const KEY_TODOS = 'luminara_browser:todos';
     const KEY_SETTINGS = 'luminara_browser:settings';
     const KEY_GENUI = 'luminara_browser:genui_payload';
+    const KEY_SS = 'luminara_browser:session_tok';
 
     let omniMode = 'search';
     let activeHandoffRunId = null;
+    let activeMutationId = null;
     let activeAbort = null;
 
     function el(tag, cls, text) {{
@@ -383,8 +314,7 @@ def build_luminara_newtab_html(
       return node;
     }}
 
-    const SESSION_TOK = (() => {{
-      const KEY_SS = 'luminara_browser:session_tok';
+    let sessionTok = (() => {{
       const m = (location.hash || '').match(/(?:^#|&)lum_tok(?:en)?=([^&]+)/);
       if (m) {{
         const tok = decodeURIComponent(m[1]);
@@ -399,12 +329,31 @@ def build_luminara_newtab_html(
 
     function apiHeaders(isJson) {{
       const h = {{}};
-      const uiAuth = UI_KEY || SESSION_TOK;
+      const uiAuth = UI_KEY || sessionTok;
       if (uiAuth) h['X-Luminara-UI-Key'] = uiAuth;
       const passport = (loadSettings().passportToken || '').trim();
       if (passport) h['Authorization'] = 'Bearer ' + passport;
       if (isJson) h['Content-Type'] = 'application/json';
       return h;
+    }}
+
+    async function exchangePassportSession() {{
+      if (UI_KEY || sessionTok || !(loadSettings().passportToken || '').trim()) return;
+      try {{
+        const r = await fetch(DAEMON + '/api/agent/session-token', {{
+          method: 'POST',
+          headers: apiHeaders(true),
+          body: JSON.stringify({{ scope: 'ui', ttl_sec: 900 }}),
+          signal: AbortSignal.timeout(4000)
+        }});
+        if (r.ok) {{
+          const d = await r.json();
+          if (d && d.token) {{
+            sessionTok = d.token;
+            try {{ sessionStorage.setItem(KEY_SS, sessionTok); }} catch (_e) {{}}
+          }}
+        }}
+      }} catch (_e) {{}}
     }}
 
     async function apiFetch(path, body, signal) {{
@@ -436,6 +385,9 @@ def build_luminara_newtab_html(
       try {{ return JSON.parse(localStorage.getItem(KEY_SETTINGS) || '{{}}'); }}
       catch (_e) {{ return {{}}; }}
     }}
+    function safeSetLS(k, v) {{
+      try {{ localStorage.setItem(k, v); }} catch (_e) {{}}
+    }}
     function applySettings() {{
       const s = loadSettings();
       document.getElementById('cfgOperator').value = s.operator || 'Luminara Operator';
@@ -447,15 +399,16 @@ def build_luminara_newtab_html(
         document.getElementById('greetingTitle').textContent = BRAND + ' · ' + s.operator;
       }}
     }}
-    document.getElementById('btnSaveSettings').addEventListener('click', () => {{
+    document.getElementById('btnSaveSettings').addEventListener('click', async () => {{
       const pEl = document.getElementById('cfgPassport');
       const s = {{
         operator: document.getElementById('cfgOperator').value.trim() || 'Luminara Operator',
         showHud: document.getElementById('cfgShowHud').checked,
         passportToken: pEl ? pEl.value.trim() : ''
       }};
-      localStorage.setItem(KEY_SETTINGS, JSON.stringify(s));
+      safeSetLS(KEY_SETTINGS, JSON.stringify(s));
       applySettings();
+      await exchangePassportSession();
       syncDaemon();
       notify('Saved workspace settings.');
     }});
@@ -484,11 +437,11 @@ def build_luminara_newtab_html(
         {{ id: 't1', text: 'Index live tab with [1..N] Set-of-Marks Copilot', prio: 'high', done: false }},
         {{ id: 't2', text: 'Synthesize Generative UI sortable matrix from multi-URL bulk run', prio: 'medium', done: false }}
       ];
-      localStorage.setItem(KEY_TODOS, JSON.stringify(seed));
+      safeSetLS(KEY_TODOS, JSON.stringify(seed));
       return seed;
     }}
     function saveTodos(list) {{
-      localStorage.setItem(KEY_TODOS, JSON.stringify(list));
+      safeSetLS(KEY_TODOS, JSON.stringify(list));
       renderTodos();
     }}
     function renderTodos() {{
@@ -601,7 +554,7 @@ def build_luminara_newtab_html(
             const r = el('div', 'row-item');
             const left = el('div');
             left.style.cssText = 'display:grid;min-width:0;';
-            left.append(el('strong', '', '⚡ ' + (pb.domain || '')), el('span', 'mono', (pb.goal || pb.playbook_id || '') + ' (' + (pb.steps ? pb.steps.length : 0) + ' steps)'));
+            left.append(el('strong', '', '⚡ ' + (pb.domain || '')), el('span', 'mono', (pb.goal_example || pb.goal || pb.playbook_id || '') + ' (' + (pb.steps ? pb.steps.length : 0) + ' steps)'));
             const acts = el('div');
             acts.style.cssText = 'display:flex;gap:4px;align-items:center;';
             const bRep = el('button', 'btn-ghost', 'Replay');
@@ -609,6 +562,7 @@ def build_luminara_newtab_html(
             bRep.onclick = async () => {{
               try {{
                 const res = await apiFetch('/api/agent/playbooks', {{ action: 'replay', playbook_id: pb.playbook_id }});
+                if (res && res.generative_ui) safeSetLS(KEY_GENUI, JSON.stringify(res.generative_ui));
                 notify('Playbook ' + (res.status || 'COMPLETED'));
               }} catch (err) {{ notify('Replay failed: ' + err.message); }}
             }};
@@ -641,6 +595,30 @@ def build_luminara_newtab_html(
       }}
     }}
     document.getElementById('btnSyncVault').addEventListener('click', syncVaultAndPlaybooks);
+    document.getElementById('btnToggleVaultForm').addEventListener('click', () => {{
+      const f = document.getElementById('vaultRegForm');
+      f.style.display = f.style.display === 'none' ? 'grid' : 'none';
+    }});
+    document.getElementById('vaultRegForm').addEventListener('submit', async e => {{
+      e.preventDefault();
+      const origin = document.getElementById('vltOrigin').value.trim();
+      const username = document.getElementById('vltUser').value.trim();
+      const vault_id = document.getElementById('vltId').value.trim() || undefined;
+      const password = document.getElementById('vltPass').value;
+      const totp_secret = document.getElementById('vltTotp').value.trim();
+      if (!password && !totp_secret) {{
+        notify('Provide at least a password or TOTP secret.');
+        return;
+      }}
+      try {{
+        const res = await apiFetch('/api/agent/vault', {{ action: 'register', origin, username, vault_id, password, totp_secret }});
+        document.getElementById('vltPass').value = '';
+        document.getElementById('vltTotp').value = '';
+        document.getElementById('vaultRegForm').style.display = 'none';
+        notify('Sealed credential handle ' + (res.entry ? res.entry.vault_id : ''));
+        syncVaultAndPlaybooks();
+      }} catch (err) {{ notify('Vault registration failed: ' + err.message); }}
+    }});
 
     const placeholders = {{
       search: 'Search privately or enter any URL...',
@@ -667,6 +645,7 @@ def build_luminara_newtab_html(
       if (activeAbort) {{
         activeAbort.abort();
         activeAbort = null;
+        apiFetch('/api/agent/act', {{ action: 'human_takeover' }}).catch(() => {{}});
         submitBtn.textContent = 'LAUNCH ↵';
         submitBtn.classList.remove('stop');
         statusEl.textContent = 'Execution aborted by operator.';
@@ -679,6 +658,8 @@ def build_luminara_newtab_html(
       if (omniMode === 'search') {{
         if (/^(https?:\\/\\/|file:\\/\\/|about:)/i.test(val)) {{
           window.location.href = val;
+        }} else if (/^(localhost|127\\.0\\.0\\.1|\\[::1\\])(:\\d+)?(\\/.*)?$/i.test(val) && !val.includes(' ')) {{
+          window.location.href = 'http://' + val;
         }} else if (/^[a-z0-9-]+(\\.[a-z0-9-]+)+(:\\d+)?(\\/.*)?$/i.test(val) && !val.includes(' ')) {{
           window.location.href = 'https://' + val;
         }} else {{
@@ -687,15 +668,16 @@ def build_luminara_newtab_html(
         return;
       }}
 
-      activeAbort = new AbortController();
+      const runCtrl = new AbortController();
+      activeAbort = runCtrl;
       submitBtn.textContent = 'STOP ■';
       submitBtn.classList.add('stop');
 
       try {{
         if (omniMode === 'goal') {{
           statusEl.textContent = 'Running autonomous perceive-decide-act loop (click STOP ■ to abort)...';
-          const data = await apiFetch('/api/agent/goal', {{ goal: val, agent_id: 'omnibox-autopilot' }}, activeAbort.signal);
-          if (data.generative_ui) localStorage.setItem(KEY_GENUI, JSON.stringify(data.generative_ui));
+          const data = await apiFetch('/api/agent/goal', {{ goal: val, show_badges: loadSettings().showHud !== false, agent_id: 'omnibox-autopilot' }}, runCtrl.signal);
+          if (data.generative_ui) safeSetLS(KEY_GENUI, JSON.stringify(data.generative_ui));
           const rid = data.receipt ? data.receipt.receipt_id : 'n/a';
           statusEl.textContent = `Status: ${{data.status}} · Provider: ${{data.provider || 'heuristic'}} · Receipt: ${{rid}}`;
           notify('Goal ' + data.status);
@@ -703,8 +685,8 @@ def build_luminara_newtab_html(
         }} else if (omniMode === 'bulk') {{
           const urls = val.split(/[\\s,]+/).filter(Boolean);
           statusEl.textContent = `Running parallel BulkEngine across ${{urls.length}} URL(s)...`;
-          const data = await apiFetch('/api/agent/bulk', {{ urls, concurrency: 4 }}, activeAbort.signal);
-          if (data.generative_ui) localStorage.setItem(KEY_GENUI, JSON.stringify(data.generative_ui));
+          const data = await apiFetch('/api/agent/bulk', {{ urls, concurrency: 4 }}, runCtrl.signal);
+          if (data.generative_ui) safeSetLS(KEY_GENUI, JSON.stringify(data.generative_ui));
           const rid = data.receipt ? data.receipt.receipt_id : 'n/a';
           statusEl.textContent = `Extracted ${{data.row_count || 0}} rows (${{rid}}) — Opening Generative UI Studio...`;
           notify(`Extracted ${{data.row_count || 0}} rows!`);
@@ -714,9 +696,11 @@ def build_luminara_newtab_html(
         if (err && err.name === 'AbortError') return;
         statusEl.textContent = 'Action failed: ' + (err.message || String(err)) + ' — Verify Agent Daemon is online and retry.';
       }} finally {{
-        activeAbort = null;
-        submitBtn.textContent = 'LAUNCH ↵';
-        submitBtn.classList.remove('stop');
+        if (activeAbort === runCtrl) {{
+          activeAbort = null;
+          submitBtn.textContent = 'LAUNCH ↵';
+          submitBtn.classList.remove('stop');
+        }}
       }}
     }});
 
@@ -724,8 +708,19 @@ def build_luminara_newtab_html(
       const dot = document.getElementById('daemonDot');
       const lbl = document.getElementById('daemonLabel');
       const refreshBtn = document.getElementById('btnRefreshDaemon');
+      if (!COBROWSE_ENABLED) {{
+        dot.classList.add('offline');
+        lbl.textContent = `${{BRAND}} · Zero Google Telemetry · Standalone Privacy Mode`;
+        const tBox = document.getElementById('liveTabsList');
+        tBox.replaceChildren();
+        const r = el('div', 'row-item');
+        r.appendChild(el('span', 'mono', 'Agent co-browsing is disabled in ForkProfile.'));
+        tBox.appendChild(r);
+        return;
+      }}
       refreshBtn.disabled = true;
       try {{
+        await exchangePassportSession();
         const [st, tb] = await Promise.all([
           apiFetch('/api/agent/status', undefined, AbortSignal.timeout(2200)),
           apiFetch('/api/agent/tabs', undefined, AbortSignal.timeout(2200))
@@ -744,7 +739,22 @@ def build_luminara_newtab_html(
           banner.classList.remove('visible');
         }}
 
-        const tabs = tb.tabs || [];
+        const mutBanner = document.getElementById('mutationBanner');
+        const pendMuts = st.pending_mutations || [];
+        if (pendMuts.length > 0) {{
+          const m = pendMuts[0];
+          activeMutationId = m.mutation_id;
+          document.getElementById('mutationText').textContent = `[${{m.risk_level || 'MEDIUM'}}] ${{m.method}} ${{m.url}} (${{pendMuts.length}} queued)`;
+          mutBanner.classList.add('visible');
+        }} else {{
+          activeMutationId = null;
+          mutBanner.classList.remove('visible');
+        }}
+
+        const tabs = (tb.tabs || []).filter(t => {{
+          const u = String(t.url || '');
+          return !/^(chrome(-extension)?:\\/\\/|devtools:\\/\\/|about:)/i.test(u) && !/\\/(newtab|workspace)(\\.html)?([?#]|$)/i.test(u);
+        }});
         document.getElementById('tabCount').textContent = String(tabs.length);
         const tBox = document.getElementById('liveTabsList');
         tBox.replaceChildren();
@@ -756,7 +766,7 @@ def build_luminara_newtab_html(
           tabs.forEach(t => {{
             const row = el('div', 'row-item');
             const left = el('div');
-            left.style.minWidth = '0';
+            left.style.cssText = 'min-width:0;overflow-wrap:anywhere;';
             left.append(
               el('div', '', (t.title || 'Untitled Tab').slice(0, 60)),
               el('div', 'mono', (t.url || '').slice(0, 72))
@@ -786,7 +796,7 @@ def build_luminara_newtab_html(
                 try {{
                   const d = await apiFetch('/api/agent/genui', {{ target_id: t.target_id }});
                   if (d.generative_ui) {{
-                    localStorage.setItem(KEY_GENUI, JSON.stringify(d.generative_ui));
+                    safeSetLS(KEY_GENUI, JSON.stringify(d.generative_ui));
                     window.location.href = WORKSPACE_URI;
                   }}
                 }} catch (err) {{
@@ -841,14 +851,30 @@ def build_luminara_newtab_html(
       }}
     }}
 
-    document.getElementById('btnResumeHandoff').addEventListener('click', async () => {{
+    document.getElementById('btnResumeHandoff').addEventListener('click', async e => {{
       if (!activeHandoffRunId) return;
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      btn.textContent = 'Resuming...';
       try {{
-        await apiFetch('/api/agent/handoff/resume', {{ run_id: activeHandoffRunId }});
+        const res = await apiFetch('/api/agent/handoff/resume', {{ run_id: activeHandoffRunId }}, AbortSignal.timeout(35000));
+        if (res && res.generative_ui) safeSetLS(KEY_GENUI, JSON.stringify(res.generative_ui));
         notify('Resumed agent goal after human handoff.');
         syncDaemon();
       }} catch (err) {{ notify('Resume failed: ' + err.message); }}
+      finally {{ btn.disabled = false; btn.textContent = 'Resume Agent ↵'; }}
     }});
+    async function resolveBannerMutation(decision) {{
+      if (!activeMutationId) return;
+      try {{
+        await exchangePassportSession();
+        await apiFetch('/api/agent/mutations', {{ action: decision, mutation_id: activeMutationId }});
+        notify('Mutation ' + decision + 'd.');
+        syncDaemon();
+      }} catch (err) {{ notify('Mutation action failed: ' + err.message); }}
+    }}
+    document.getElementById('btnApproveMutation').addEventListener('click', () => resolveBannerMutation('approve'));
+    document.getElementById('btnRejectMutation').addEventListener('click', () => resolveBannerMutation('reject'));
     document.getElementById('btnRefreshDaemon').addEventListener('click', syncDaemon);
     document.getElementById('btnCopyMcp').addEventListener('click', async () => {{
       try {{
@@ -857,11 +883,22 @@ def build_luminara_newtab_html(
       }} catch (_e) {{ notify('MCP endpoint: ' + DAEMON + '/api/agent/mcp'); }}
     }});
 
+    document.querySelectorAll('[role="tablist"]').forEach(list => {{
+      const tabs = Array.from(list.querySelectorAll('[role="tab"]'));
+      tabs.forEach((t, i) => t.addEventListener('keydown', e => {{
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+        e.preventDefault();
+        const nxt = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+        nxt.focus();
+        nxt.click();
+      }}));
+    }});
     applySettings();
     renderTodos();
     syncDaemon();
-    setInterval(syncDaemon, 5000);
+    if (COBROWSE_ENABLED) setInterval(syncDaemon, 5000);
     setInterval(() => {{ document.getElementById('clock').textContent = new Date().toLocaleTimeString(); }}, 1000);
+    {palette_iife}
   </script>
 </body>
 </html>

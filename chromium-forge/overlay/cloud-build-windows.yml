@@ -48,9 +48,9 @@ jobs:
           python -m pip install httplib2==0.22.0 clang==21.1.7
       - name: Apply Luminara Browser Overlay & Run Ninja Stage 1/16 (PGO + ThinLTO)
         run: |
-          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          luminara-forge --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows export-windows-overlay
           cd ungoogled-chromium-windows
-          python build.py --ci -j 4 
+          python build.py --ci -j 4
       - name: Checkpoint Stage 1 Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -84,9 +84,9 @@ jobs:
           python -m pip install httplib2==0.22.0 clang==21.1.7
       - name: Apply Luminara Browser Overlay & Run Ninja Stage 2/16 (PGO + ThinLTO)
         run: |
-          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          luminara-forge --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows export-windows-overlay
           cd ungoogled-chromium-windows
-          python build.py --ci -j 4 
+          python build.py --ci -j 4
       - name: Checkpoint Stage 2 Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -120,9 +120,9 @@ jobs:
           python -m pip install httplib2==0.22.0 clang==21.1.7
       - name: Apply Luminara Browser Overlay & Run Ninja Stage 3/16 (PGO + ThinLTO)
         run: |
-          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          luminara-forge --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows export-windows-overlay
           cd ungoogled-chromium-windows
-          python build.py --ci -j 4 
+          python build.py --ci -j 4
       - name: Checkpoint Stage 3 Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -156,9 +156,9 @@ jobs:
           python -m pip install httplib2==0.22.0 clang==21.1.7
       - name: Apply Luminara Browser Overlay & Run Ninja Stage 4/16 (PGO + ThinLTO)
         run: |
-          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          luminara-forge --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows export-windows-overlay
           cd ungoogled-chromium-windows
-          python build.py --ci -j 4 
+          python build.py --ci -j 4
       - name: Checkpoint Stage 4 Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -192,9 +192,9 @@ jobs:
           python -m pip install httplib2==0.22.0 clang==21.1.7
       - name: Apply Luminara Browser Overlay & Run Ninja Stage 5/16 (PGO + ThinLTO)
         run: |
-          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          luminara-forge --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows export-windows-overlay
           cd ungoogled-chromium-windows
-          python build.py --ci -j 4 
+          python build.py --ci -j 4
       - name: Checkpoint Stage 5 Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -228,9 +228,9 @@ jobs:
           python -m pip install httplib2==0.22.0 clang==21.1.7
       - name: Apply Luminara Browser Overlay & Run Ninja Stage 6/16 (PGO + ThinLTO)
         run: |
-          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          luminara-forge --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows export-windows-overlay
           cd ungoogled-chromium-windows
-          python build.py --ci -j 4 
+          python build.py --ci -j 4
       - name: Checkpoint Stage 6 Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -264,9 +264,9 @@ jobs:
           python -m pip install httplib2==0.22.0 clang==21.1.7
       - name: Apply Luminara Browser Overlay & Run Ninja Stage 7/16 (PGO + ThinLTO)
         run: |
-          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          luminara-forge --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows export-windows-overlay
           cd ungoogled-chromium-windows
-          python build.py --ci -j 4 
+          python build.py --ci -j 4
       - name: Checkpoint Stage 7 Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -300,9 +300,9 @@ jobs:
           python -m pip install httplib2==0.22.0 clang==21.1.7
       - name: Apply Luminara Browser Overlay & Run Ninja Stage 8/16 (PGO + ThinLTO)
         run: |
-          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          luminara-forge --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows export-windows-overlay
           cd ungoogled-chromium-windows
-          python build.py --ci -j 4 
+          python build.py --ci -j 4
       - name: Checkpoint Stage 8 Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -336,9 +336,9 @@ jobs:
           python -m pip install httplib2==0.22.0 clang==21.1.7
       - name: Apply Luminara Browser Overlay & Run Ninja Stage 9/16 (PGO + ThinLTO)
         run: |
-          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          luminara-forge --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows export-windows-overlay
           cd ungoogled-chromium-windows
-          python build.py --ci -j 4 
+          python build.py --ci -j 4
       - name: Checkpoint Stage 9 Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -372,9 +372,9 @@ jobs:
           python -m pip install httplib2==0.22.0 clang==21.1.7
       - name: Apply Luminara Browser Overlay & Run Ninja Stage 10/16 (PGO + ThinLTO)
         run: |
-          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          luminara-forge --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows export-windows-overlay
           cd ungoogled-chromium-windows
-          python build.py --ci -j 4 
+          python build.py --ci -j 4
       - name: Checkpoint Stage 10 Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -408,9 +408,9 @@ jobs:
           python -m pip install httplib2==0.22.0 clang==21.1.7
       - name: Apply Luminara Browser Overlay & Run Ninja Stage 11/16 (PGO + ThinLTO)
         run: |
-          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          luminara-forge --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows export-windows-overlay
           cd ungoogled-chromium-windows
-          python build.py --ci -j 4 
+          python build.py --ci -j 4
       - name: Checkpoint Stage 11 Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -444,9 +444,9 @@ jobs:
           python -m pip install httplib2==0.22.0 clang==21.1.7
       - name: Apply Luminara Browser Overlay & Run Ninja Stage 12/16 (PGO + ThinLTO)
         run: |
-          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          luminara-forge --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows export-windows-overlay
           cd ungoogled-chromium-windows
-          python build.py --ci -j 4 
+          python build.py --ci -j 4
       - name: Checkpoint Stage 12 Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -480,9 +480,9 @@ jobs:
           python -m pip install httplib2==0.22.0 clang==21.1.7
       - name: Apply Luminara Browser Overlay & Run Ninja Stage 13/16 (PGO + ThinLTO)
         run: |
-          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          luminara-forge --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows export-windows-overlay
           cd ungoogled-chromium-windows
-          python build.py --ci -j 4 
+          python build.py --ci -j 4
       - name: Checkpoint Stage 13 Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -516,9 +516,9 @@ jobs:
           python -m pip install httplib2==0.22.0 clang==21.1.7
       - name: Apply Luminara Browser Overlay & Run Ninja Stage 14/16 (PGO + ThinLTO)
         run: |
-          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          luminara-forge --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows export-windows-overlay
           cd ungoogled-chromium-windows
-          python build.py --ci -j 4 
+          python build.py --ci -j 4
       - name: Checkpoint Stage 14 Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -552,9 +552,9 @@ jobs:
           python -m pip install httplib2==0.22.0 clang==21.1.7
       - name: Apply Luminara Browser Overlay & Run Ninja Stage 15/16 (PGO + ThinLTO)
         run: |
-          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          luminara-forge --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows export-windows-overlay
           cd ungoogled-chromium-windows
-          python build.py --ci -j 4 
+          python build.py --ci -j 4
       - name: Checkpoint Stage 15 Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -588,9 +588,9 @@ jobs:
           python -m pip install httplib2==0.22.0 clang==21.1.7
       - name: Apply Luminara Browser Overlay & Run Ninja Stage 16/16 (PGO + ThinLTO)
         run: |
-          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          luminara-forge --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows export-windows-overlay
           cd ungoogled-chromium-windows
-          python build.py --ci -j 4 
+          python build.py --ci -j 4
       - name: Checkpoint Stage 16 Artifacts
         if: always()
         uses: actions/upload-artifact@v4

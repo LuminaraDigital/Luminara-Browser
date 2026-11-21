@@ -26,7 +26,7 @@ import urllib.parse
 import urllib.request
 
 from .action_ledger import ActionLedger, GENESIS_PREV_HASH
-from .cdp_client import CDPBridge, CDPError
+from .cdp_client import CDPBridge, CDPError, is_internal_browser_url
 from .extractor import (
     build_dom_action_js,
     build_dom_snapshot_js,
@@ -139,10 +139,11 @@ class BulkEngine:
         if cancel_ev.is_set():
             return {"url": url, "status": "CANCELLED", "rows": []}
 
-        tab = self.cdp.open_tab("about:blank", background=True)
-        tid = tab["target_id"]
+        tid: str | None = None
         keep_open = False
         try:
+            tab = self.cdp.open_tab("about:blank", background=True)
+            tid = tab["target_id"]
             self.cdp.navigate(tid, url, settle_sec=settle_sec, allow_file=allow_file)
             snap = self.cdp.evaluate_js(tid, build_dom_snapshot_js(show_badges=False, agent_label=""))
             if not isinstance(snap, dict):
@@ -171,7 +172,7 @@ class BulkEngine:
                 self.throttle.on_rate_limit(url)
             return {"url": url, "status": "FAILED", "error": str(exc), "rows": []}
         finally:
-            if not keep_open:
+            if tid and not keep_open:
                 self.cdp.close_tab(tid)
 
     def run_job(
@@ -573,10 +574,11 @@ class AgentGoalRunner:
         agent_id: str = "luminara-autopilot",
         run_id: str | None = None,
         prior_steps: list[dict[str, Any]] | None = None,
+        show_badges: bool = True,
     ) -> dict[str, Any]:
+        steps_log: list[dict[str, Any]] = list(prior_steps) if prior_steps else []
         rid = run_id or f"goal_{int(time.time() * 1000)}"
-        min_resume_bound = (len(prior_steps) + 2) if prior_steps is not None else 1
-        bounded_steps = min(max(1, max_steps, min_resume_bound), 15)
+        bounded_steps = len(steps_log) + min(max(1, max_steps), 15)
         user_allowed_file = ("file:///" in goal.lower()) or bool(start_url and start_url.lower().startswith("file:///"))
 
         if target_id is None:
@@ -590,12 +592,15 @@ class AgentGoalRunner:
             tid = target_id
 
         self.cdp.leases.acquire(tid, agent_id=agent_id, ttl_sec=120.0, purpose=goal[:80])
-        steps_log: list[dict[str, Any]] = list(prior_steps) if prior_steps else []
         last_signature: tuple[Any, ...] | None = None
         initial_url = ""
 
+        def _is_internal_or_blank(u: str) -> bool:
+            return is_internal_browser_url(u, cdp_port=self.cdp.port)
+
         def _pause_at_gate(gate_name: str, current_url: str) -> dict[str, Any]:
             self.cdp.leases.release(tid, agent_id)
+            rem_steps = max(1, bounded_steps - len(steps_log))
             handoff_info = {
                 "run_id": rid,
                 "goal": goal,
@@ -603,7 +608,8 @@ class AgentGoalRunner:
                 "url": current_url,
                 "gate_type": gate_name,
                 "agent_id": agent_id,
-                "max_steps": bounded_steps,
+                "max_steps": rem_steps,
+                "remaining_steps": rem_steps,
                 "steps": steps_log,
                 "paused_at": time.time(),
             }
@@ -678,20 +684,23 @@ class AgentGoalRunner:
             if start_url:
                 self.cdp.navigate(tid, start_url, settle_sec=0.6, allow_file=user_allowed_file)
 
-            for step_num in range(len(steps_log) + 1, bounded_steps + 1):
-                snap = self.cdp.evaluate_js(tid, build_dom_snapshot_js(show_badges=True, agent_label=agent_id))
+            while len(steps_log) < bounded_steps:
+                snap = self.cdp.evaluate_js(tid, build_dom_snapshot_js(show_badges=show_badges, agent_label=agent_id))
                 if not isinstance(snap, dict):
                     raise CDPError("Empty DOM snapshot")
-                if not initial_url:
-                    initial_url = str(snap.get("url") or "")
+                cur_snap_url = str(snap.get("url") or "")
+                if not initial_url and not _is_internal_or_blank(cur_snap_url):
+                    initial_url = cur_snap_url
 
                 gate = snap.get("gate_detected")
                 if gate:
-                    return _pause_at_gate(str(gate), str(snap.get("url") or ""))
+                    return _pause_at_gate(str(gate), cur_snap_url)
 
                 # Zero-LLM Playbook Replay fast-path on first step (unless custom test caller is injected)
-                if step_num == 1 and not steps_log and self.router.custom_caller is None and initial_url:
-                    matched_pb = self.playbooks.match_playbook(initial_url, goal)
+                goal_url_match = re.search(r"https?://[^\s\"'<>]+", goal)
+                pb_probe_url = initial_url or (goal_url_match.group(0) if goal_url_match else "")
+                if not steps_log and self.router.custom_caller is None and pb_probe_url:
+                    matched_pb = self.playbooks.match_playbook(pb_probe_url, goal)
                     if matched_pb is not None:
                         replay = self.playbooks.replay_playbook(
                             matched_pb,
@@ -703,12 +712,13 @@ class AgentGoalRunner:
                         )
                         steps_log.extend(replay.get("steps", []))
                         if replay.get("status") == "PAUSED_HUMAN_HANDOFF":
-                            return _pause_at_gate(str(replay.get("gate_type") or "login_or_mfa_wall"), str(replay.get("url") or initial_url))
+                            return _pause_at_gate(str(replay.get("gate_type") or "login_or_mfa_wall"), str(replay.get("url") or pb_probe_url))
                         if replay.get("status") == "COMPLETED":
                             post_snap = self.cdp.evaluate_js(tid, build_dom_snapshot_js(show_badges=True, agent_label=agent_id))
                             if isinstance(post_snap, dict) and post_snap.get("gate_detected"):
                                 return _pause_at_gate(str(post_snap["gate_detected"]), str(post_snap.get("url") or ""))
-                            self.playbooks.record_successful_run(url=initial_url, goal=goal, steps=steps_log)
+                            done_url = str(post_snap.get("url") or pb_probe_url) if isinstance(post_snap, dict) else pb_probe_url
+                            self.playbooks.record_successful_run(url=done_url, goal=goal, steps=steps_log)
                             return _finalize_goal_run(
                                 post_snap if isinstance(post_snap, dict) else snap,
                                 status_code="COMPLETED",
@@ -717,9 +727,13 @@ class AgentGoalRunner:
                                 summary_msg=f"Replayed verified playbook {matched_pb['playbook_id']} in 0 LLM calls",
                                 playbook_id=matched_pb["playbook_id"],
                             )
-                        snap = self.cdp.evaluate_js(tid, build_dom_snapshot_js(show_badges=True, agent_label=agent_id))
+                        snap = self.cdp.evaluate_js(tid, build_dom_snapshot_js(show_badges=show_badges, agent_label=agent_id))
                         if not isinstance(snap, dict):
                             raise CDPError("Empty DOM snapshot after playbook drift")
+                        if snap.get("gate_detected"):
+                            return _pause_at_gate(str(snap["gate_detected"]), str(snap.get("url") or ""))
+                        if len(steps_log) >= bounded_steps:
+                            break
 
                 decision = self._decide_next_action(goal, snap, steps_log)
                 act = str(decision.get("action") or "done")
@@ -730,8 +744,11 @@ class AgentGoalRunner:
                 last_signature = sig
 
                 if act == "done":
+                    final_domain_url = str(snap.get("url") or "")
+                    if _is_internal_or_blank(final_domain_url):
+                        final_domain_url = initial_url or str(snap.get("url") or "")
                     playbook_rec = self.playbooks.record_successful_run(
-                        url=initial_url or snap.get("url", ""),
+                        url=final_domain_url,
                         goal=goal,
                         steps=steps_log,
                         snapshot_elements=snap.get("elements", []),
@@ -808,19 +825,27 @@ class AgentGoalRunner:
 
     def resume_handoff(self, run_id: str) -> dict[str, Any]:
         with self._handoff_lock:
-            info = self.active_handoffs.get(run_id)
+            info = self.active_handoffs.pop(run_id, None)
+            if info is not None:
+                self._save_handoffs()
         if not info:
             raise ValueError(f"Unknown or already resumed handoff run_id: {run_id!r}")
-        result = self.run_goal(
+        live_tid: str | None = info.get("target_id")
+        saved_url = str(info.get("url") or "")
+        if live_tid and self.cdp.is_alive():
+            open_ids = {t["target_id"] for t in self.cdp.list_tabs(include_extensions=True)}
+            if live_tid not in open_ids:
+                live_tid = None
+        if live_tid is None:
+            allow_f = saved_url.lower().startswith("file:///")
+            live_tid = self.cdp.open_tab(saved_url or "about:blank", background=False, allow_file=allow_f)["target_id"]
+        rem = int(info.get("remaining_steps") or info.get("max_steps") or 8)
+        return self.run_goal(
             goal=info["goal"],
-            target_id=info["target_id"],
-            max_steps=info["max_steps"],
+            target_id=live_tid,
+            start_url=None,
+            max_steps=min(max(1, rem), 15),
             agent_id=info["agent_id"],
             run_id=run_id,
             prior_steps=info.get("steps"),
         )
-        if result.get("status") != "PAUSED_HUMAN_HANDOFF":
-            with self._handoff_lock:
-                self.active_handoffs.pop(run_id, None)
-                self._save_handoffs()
-        return result

@@ -57,7 +57,7 @@
     fetch('/api/health')
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
       .then((d) => {
-        healthEl.textContent = `● Edge Active · v${d.version || '3.0.0'} · ${d.mcp_tool_count || 20} MCP Tools (${d.colo || 'edge'})`;
+        healthEl.textContent = `● Edge Active · v${d.version || '3.1.0'} · ${d.mcp_tool_count || 28} MCP Tools (${d.colo || 'edge'})`;
       })
       .catch(() => {
         healthEl.textContent = '○ Static Preview Mode · Local Daemon target 127.0.0.1:8796';

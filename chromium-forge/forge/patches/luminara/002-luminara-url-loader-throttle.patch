@@ -1,0 +1,15 @@
+--- a/services/network/public/cpp/resource_request.h
++++ b/services/network/public/cpp/resource_request.h
+@@ -295,6 +295,12 @@
+   std::optional<network::PermissionsPolicy> permissions_policy;
+ 
+   std::optional<network::FetchRetryOptions> fetch_retry_options;
++
++  // Luminara Shield v3: marks requests scrubbed of tracking query params
++  // (utm_*, fbclid, gclid) or intercepted by the Network Mutation Firewall.
++  bool luminara_tracking_params_scrubbed = false;
++  bool luminara_mutation_guard_approved = false;
++
+   // LINT.ThenChange(//services/network/prefetch_matches.cc)
+ };
+ 

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark light" />
-  <title>Luminara Browser — Design System v3.0.0</title>
+  <title>Luminara Browser — Design System v3.1.0</title>
   <style>
     :root {
       color-scheme: dark light;
@@ -15,10 +15,11 @@
       --ink-0: light-dark(oklch(0.15 0.015 255), oklch(0.965 0.005 255));
       --ink-1: light-dark(oklch(0.34 0.015 255), oklch(0.78 0.012 255));
       --ink-2: light-dark(oklch(0.44 0.015 255), oklch(0.67 0.012 255));
-      --accent: light-dark(oklch(0.48 0.15 162), oklch(0.75 0.16 162));
-      --amber: light-dark(oklch(0.52 0.15 72), oklch(0.79 0.15 78));
+      --accent: light-dark(oklch(0.45 0.15 162), oklch(0.75 0.16 162));
+      --amber: light-dark(oklch(0.48 0.14 72), oklch(0.79 0.15 78));
       --danger: light-dark(oklch(0.50 0.19 26), oklch(0.68 0.18 25));
       --hairline: light-dark(oklch(0.15 0.01 255 / 0.12), oklch(1 0 0 / 0.09));
+      --border-control: light-dark(oklch(0.15 0.01 255 / 0.34), oklch(1 0 0 / 0.28));
       --specular: inset 0 1px 0 0 oklch(1 0 0 / 0.1);
       --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
@@ -54,7 +55,7 @@
     <header>
       <div class="kicker">SYNCHRONIZED DESIGN SYSTEM · WCAG 2.2 AA · OKLCH LIGHT-DARK()</div>
       <h1>Luminara Browser Visual Token Reference</h1>
-      <p class="mono" style="margin-top:6px;">Mirrored live specification for <code>docs/design.md</code> (v3.0.0)</p>
+      <p class="mono" style="margin-top:6px;">Mirrored live specification for <code>docs/design.md</code> (v3.1.0)</p>
     </header>
     <section class="grid" aria-label="Color Tokens">
       <article class="card"><div class="swatch" style="background:var(--bg-0)"></div><strong>bg_canvas</strong><span class="mono">--bg-0</span></article>
@@ -63,12 +64,13 @@
       <article class="card"><div class="swatch" style="background:var(--accent)"></div><strong>accent_emerald</strong><span class="mono">--accent (&gt;= 4.8:1)</span></article>
       <article class="card"><div class="swatch" style="background:var(--amber)"></div><strong>status_amber</strong><span class="mono">--amber (HITL Handoff)</span></article>
       <article class="card"><div class="swatch" style="background:var(--danger)"></div><strong>status_danger</strong><span class="mono">--danger (Alert)</span></article>
+      <article class="card"><div class="swatch" style="background:var(--bg-1);border:2px solid var(--border-control)"></div><strong>border_control</strong><span class="mono">--border-control (&gt;= 3.1:1)</span></article>
     </section>
     <section class="card">
       <div class="kicker">INTERACTIVE STATES &amp; CONCENTRIC RADIUS LAW (20px = 10px + 10px)</div>
       <div style="background:var(--bg-2);padding:10px;border-radius:20px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
         <button class="btn" type="button">Primary CTA (Tab to verify 2px focus ring)</button>
-        <span class="mono">Metrics: 14/14 PASS · 9,530 ms · 0 leaks</span>
+        <span class="mono">Metrics: 21/21 REA PASS · 28 MCP Tools · 0 leaks</span>
       </div>
     </section>
   </main>

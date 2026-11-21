@@ -18,6 +18,7 @@ import re
 from .domsub import PATTERN_DELIM, retarget_domain_regex_tld
 from .models import ForkProfile
 from .patcher import parse_unified_diff
+from .shield_compiler import normalize_shield_domain
 
 ENCODING = "utf-8"
 
@@ -200,8 +201,8 @@ def build_custom_domain_regex_list(upstream_lines: list[str], profile: ForkProfi
     """Retarget `domain_regex.list` to `profile.trap_tld` and append user-defined blocked domains."""
     lines = retarget_domain_regex_tld(upstream_lines, new_tld=profile.trap_tld)
     for idx, raw_dom in enumerate(profile.extra_blocked_domains, start=1):
-        dom = raw_dom.strip().lower()
-        if not dom or "." not in dom:
+        dom = normalize_shield_domain(raw_dom)
+        if not dom:
             continue
         escaped = re.escape(dom)
         label = re.sub(r"[^a-z0-9]", "", dom.split(".")[0]) or f"custom{idx}"
@@ -212,6 +213,7 @@ def build_custom_domain_regex_list(upstream_lines: list[str], profile: ForkProfi
 def generate_github_actions_cloud_workflow(profile: ForkProfile) -> str:
     """Generate a full 16-stage checkpointed GitHub Actions Windows x64/arm64 PGO+ThinLTO cloud builder workflow."""
     arch_flag = "--x86" if profile.target_cpu == "x86" else "--arm" if profile.target_cpu == "arm64" else ""
+    build_cmd = f"python build.py --ci -j 4 {arch_flag}".rstrip()
     stages_yaml: list[str] = []
     for stage in range(1, 17):
         prev_job = "verify-custom-patches" if stage == 1 else f"compile-stage-{stage - 1}"
@@ -247,9 +249,9 @@ def generate_github_actions_cloud_workflow(profile: ForkProfile) -> str:
           python -m pip install httplib2==0.22.0 clang==21.1.7
       - name: Apply {profile.brand_name} Overlay & Run Ninja Stage {stage}/16 (PGO + ThinLTO)
         run: |
-          luminara-forge export-windows-overlay --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows
+          luminara-forge --profile chromium-forge/fork.json --windows-repo ./ungoogled-chromium-windows export-windows-overlay
           cd ungoogled-chromium-windows
-          python build.py --ci -j 4 {arch_flag}
+          {build_cmd}
       - name: Checkpoint Stage {stage} Artifacts
         if: always()
         uses: actions/upload-artifact@v4

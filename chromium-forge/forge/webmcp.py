@@ -150,10 +150,21 @@ _DISCOVER_WEBMCP_JS = WEBMCP_BOOTSTRAP_JS + r"""
       if (type === 'number' || type === 'range') jsonType = 'number';
       else if (type === 'checkbox') jsonType = 'boolean';
 
+      if (type === 'radio' && props[fname]) {
+        if (el.value) {
+          props[fname].enum = props[fname].enum || [];
+          if (!props[fname].enum.includes(el.value) && props[fname].enum.length < 30) props[fname].enum.push(el.value);
+        }
+        if (el.required && !required.includes(fname)) required.push(fname);
+        continue;
+      }
+
       const propSpec = { type: jsonType, description: desc };
       if (el.tagName === 'SELECT') {
         const opts = Array.from(el.options).map(o => o.value).filter(Boolean).slice(0, 30);
         if (opts.length) propSpec.enum = opts;
+      } else if (type === 'radio' && el.value) {
+        propSpec.enum = [el.value];
       }
       props[fname] = propSpec;
       if (el.required && !required.includes(fname)) required.push(fname);
@@ -167,9 +178,11 @@ _DISCOVER_WEBMCP_JS = WEBMCP_BOOTSTRAP_JS + r"""
       `Submit ${toolName} form (${(form.getAttribute('method') || 'GET').toUpperCase()} ${form.getAttribute('action') || location.pathname})`
     ).trim().slice(0, 240);
 
-    let resolvedAction = location.href;
+    const docBase = document.baseURI || location.href;
+    let resolvedAction = docBase;
     try {
-      resolvedAction = new URL(form.getAttribute('action') || location.href, location.href).href;
+      const rawAct = form.getAttribute('action');
+      resolvedAction = new URL(rawAct || docBase, docBase).href;
     } catch (_e) {
       resolvedAction = String(form.getAttribute('action') || '');
     }
@@ -228,7 +241,7 @@ def build_invoke_webmcp_tool_js(tool_name: str, arguments: dict[str, Any], *, au
 
   const populated = [];
   for (const [k, v] of Object.entries(args)) {{
-    const field = form.querySelector(`[name="${{CSS.escape(k)}}"], #${{CSS.escape(k)}}`);
+    const field = form.querySelector(`input[name="${{CSS.escape(k)}}"], select[name="${{CSS.escape(k)}}"], textarea[name="${{CSS.escape(k)}}"], input#${{CSS.escape(k)}}, select#${{CSS.escape(k)}}, textarea#${{CSS.escape(k)}}`);
     if (!field) continue;
     const ftype = (field.getAttribute('type') || '').toLowerCase();
     if (['password', 'hidden', 'file', 'submit', 'button', 'reset', 'image'].includes(ftype)) continue;
@@ -239,8 +252,15 @@ def build_invoke_webmcp_tool_js(tool_name: str, arguments: dict[str, Any], *, au
       radioMatch.checked = true;
       targetEl = radioMatch;
     }} else if (ftype === 'checkbox') {{
-      field.checked = Boolean(v);
+      field.checked = (typeof v === 'string') ? !['false', '0', 'no', 'off', ''].includes(v.trim().toLowerCase()) : Boolean(v);
     }} else {{
+      if (field.tagName === 'SELECT') {{
+        const sVal = String(v);
+        const sLow = sVal.trim().toLowerCase();
+        const opts = Array.from(field.options || []);
+        const hit = opts.find(o => o.value === sVal) || opts.find(o => o.value.toLowerCase() === sLow || (o.text || '').trim().toLowerCase() === sLow);
+        if (!hit) return {{ ok: false, error: 'invalid_select_option', field: k, tool: toolName }};
+      }}
       const proto = field.tagName === 'TEXTAREA'
         ? window.HTMLTextAreaElement.prototype
         : (field.tagName === 'SELECT' ? window.HTMLSelectElement.prototype : window.HTMLInputElement.prototype);
@@ -256,12 +276,13 @@ def build_invoke_webmcp_tool_js(tool_name: str, arguments: dict[str, Any], *, au
   let submitted = false;
   if (autoSubmit) {{
     const rawAction = String(form.getAttribute('action') || '').trim();
-    if (/^(?:javascript|vbscript|data|file|chrome|devtools):/i.test(rawAction)) {{
+    if (/^(?:javascript|vbscript|data|file|chrome|devtools|luminara):/i.test(rawAction)) {{
       return {{ ok: false, error: 'blocked_unsafe_form_action_scheme', tool: toolName }};
     }}
+    const docBase = document.baseURI || location.href;
     let parsedAction;
     try {{
-      parsedAction = new URL(rawAction || location.href, location.href);
+      parsedAction = new URL(rawAction || docBase, docBase);
     }} catch (_e) {{
       return {{ ok: false, error: 'invalid_form_action_url', tool: toolName }};
     }}
@@ -273,6 +294,9 @@ def build_invoke_webmcp_tool_js(tool_name: str, arguments: dict[str, Any], *, au
     const isLoop = (h) => h === 'localhost' || h === '0.0.0.0' || h === '[::1]' || h === '::1' || h.startsWith('127.');
     if (actHost.startsWith('169.254.') || actHost.endsWith('.internal') || (!isLoop(curHost) && isLoop(actHost))) {{
       return {{ ok: false, error: 'blocked_ssrf_form_action_host', tool: toolName }};
+    }}
+    if (typeof form.checkValidity === 'function' && !form.checkValidity()) {{
+      return {{ ok: false, error: 'form_validation_failed', tool: toolName }};
     }}
     if (typeof form.requestSubmit === 'function') {{
       form.requestSubmit();
@@ -293,6 +317,46 @@ def build_invoke_webmcp_tool_js(tool_name: str, arguments: dict[str, Any], *, au
 
 
 _TOOL_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._\-:]{0,95}$")
+
+
+def validate_webmcp_arguments(schema: dict[str, Any] | None, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Validate and coerce `arguments` against a WebMCP tool `inputSchema` (`required`, `enum`, `type`)."""
+    out = dict(arguments)
+    if not isinstance(schema, dict):
+        return out
+    req_fields = schema.get("required")
+    if isinstance(req_fields, list):
+        for rkey in req_fields:
+            if isinstance(rkey, str) and (rkey not in out or out[rkey] is None or out[rkey] == ""):
+                raise ValueError(f"Missing required WebMCP argument: {rkey!r}")
+    props = schema.get("properties")
+    if not isinstance(props, dict):
+        return out
+    for k, val in list(out.items()):
+        spec = props.get(k)
+        if not isinstance(spec, dict) or val is None:
+            continue
+        expected_t = spec.get("type")
+        if expected_t == "string" and not isinstance(val, str):
+            raise ValueError(f"WebMCP argument {k!r} must be a string")
+        elif expected_t == "boolean":
+            if isinstance(val, str) and val.strip().lower() in ("true", "false"):
+                val = val.strip().lower() == "true"
+                out[k] = val
+            elif not isinstance(val, bool):
+                raise ValueError(f"WebMCP argument {k!r} must be a boolean")
+        elif expected_t == "integer" and (isinstance(val, bool) or not isinstance(val, int)):
+            raise ValueError(f"WebMCP argument {k!r} must be an integer")
+        elif expected_t == "number" and (isinstance(val, bool) or not isinstance(val, (int, float))):
+            raise ValueError(f"WebMCP argument {k!r} must be a number")
+        elif expected_t == "array" and not isinstance(val, list):
+            raise ValueError(f"WebMCP argument {k!r} must be an array")
+        elif expected_t == "object" and not isinstance(val, dict):
+            raise ValueError(f"WebMCP argument {k!r} must be an object")
+        allowed_enum = spec.get("enum")
+        if isinstance(allowed_enum, list) and allowed_enum and val not in allowed_enum:
+            raise ValueError(f"WebMCP argument {k!r} must be one of {allowed_enum!r}")
+    return out
 
 
 class WebMCPBridge:
@@ -320,27 +384,32 @@ class WebMCPBridge:
         cleaned = (tool_name or "").strip()
         if not _TOOL_NAME_RE.match(cleaned):
             raise ValueError(f"Invalid WebMCP tool name: {tool_name!r}")
+        if arguments is not None and not isinstance(arguments, dict):
+            raise ValueError("WebMCP arguments must be a JSON object")
+        call_args = arguments or {}
         resolved_tid = self.cdp._pick_target_id(target_id)
-        # Ensure discovery has stamped synthesized form anchors and validate form action URL against SSRF
+        # Ensure discovery has stamped synthesized form anchors, validate inputSchema, and block SSRF
         disc = self.cdp.evaluate_js(resolved_tid, _DISCOVER_WEBMCP_JS)
-        if auto_submit and isinstance(disc, dict):
+        if isinstance(disc, dict):
             page_host = (urllib.parse.urlparse(str(disc.get("url") or "")).hostname or "").rstrip(".").lower()
             for item in disc.get("tools") or []:
-                if isinstance(item, dict) and item.get("name") == cleaned and item.get("source") != "imperative":
-                    act_url = str(item.get("action_url") or "")
-                    if act_url:
-                        validate_navigation_url(
-                            act_url,
-                            allow_file=False,
-                            blocked_ports=_INTERNAL_CONTROL_PORTS | {self.cdp.port},
-                        )
-                        act_host = (urllib.parse.urlparse(act_url).hostname or "").rstrip(".").lower()
-                        if page_host and not _is_loopback_or_unspecified_host(page_host) and _is_loopback_or_unspecified_host(act_host):
-                            raise CDPError(f"Blocked cross-origin WebMCP form submission to loopback host: {act_host}")
+                if isinstance(item, dict) and item.get("name") == cleaned:
+                    call_args = validate_webmcp_arguments(item.get("inputSchema"), call_args)
+                    if auto_submit and item.get("source") != "imperative":
+                        act_url = str(item.get("action_url") or "")
+                        if act_url:
+                            validate_navigation_url(
+                                act_url,
+                                allow_file=False,
+                                blocked_ports=_INTERNAL_CONTROL_PORTS | {self.cdp.port},
+                            )
+                            act_host = (urllib.parse.urlparse(act_url).hostname or "").rstrip(".").lower()
+                            if page_host and not _is_loopback_or_unspecified_host(page_host) and _is_loopback_or_unspecified_host(act_host):
+                                raise CDPError(f"Blocked cross-origin WebMCP form submission to loopback host: {act_host}")
                     break
         res = self.cdp.evaluate_js(
             resolved_tid,
-            build_invoke_webmcp_tool_js(cleaned, arguments or {}, auto_submit=auto_submit),
+            build_invoke_webmcp_tool_js(cleaned, call_args, auto_submit=auto_submit),
             await_promise=True,
         )
         if not isinstance(res, dict):

@@ -45,6 +45,8 @@ TRACKING_QUERY_PARAMS: tuple[str, ...] = (
     "igshid",
     "yclid",
     "ref_src",
+    "twclid",
+    "ttclid",
     "spm",
     "mkt_tok",
 )
@@ -124,6 +126,9 @@ CORE_TRACKER_DOMAINS: tuple[str, ...] = (
 )
 
 _AB_DOMAIN_RE = re.compile(r"^\|\|([a-z0-9][a-z0-9.\-]{1,250})\^(?:\$[a-z0-9,=_\-]+)?$", re.IGNORECASE)
+_VALID_SHIELD_DOMAIN_RE = re.compile(
+    r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+)
 _TRACKER_RESOURCE_TYPES = [
     "sub_frame",
     "stylesheet",
@@ -142,6 +147,29 @@ _ALL_RESOURCE_TYPES = ["main_frame", *_TRACKER_RESOURCE_TYPES]
 _TWO_LABEL_PUBLIC_SUFFIXES = frozenset(
     {"co.uk", "org.uk", "gov.uk", "ac.uk", "com.au", "net.au", "org.au", "co.jp", "com.br", "co.nz", "co.in", "com.sg"}
 )
+
+
+def normalize_shield_domain(raw_domain: str) -> str | None:
+    """Normalize a user-supplied domain/URL/Adblock token into a strict ASCII/punycode hostname."""
+    cand = (raw_domain or "").strip()
+    if not cand:
+        return None
+    if cand.startswith("||"):
+        cand = cand[2:].split("^", 1)[0]
+    elif "://" in cand:
+        cand = urllib.parse.urlsplit(cand).hostname or ""
+    else:
+        cand = cand.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0].split(":", 1)[0]
+    cand = cand.strip().strip(".").lower()
+    if not cand or "." not in cand:
+        return None
+    try:
+        ascii_dom = cand.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return None
+    if len(ascii_dom) > 253 or not _VALID_SHIELD_DOMAIN_RE.match(ascii_dom):
+        return None
+    return ascii_dom
 
 
 def parse_adblock_domains(filter_lines: list[str], *, max_domains: int = 29000) -> list[str]:
@@ -230,7 +258,7 @@ def compile_dnr_shield_rules(
 
     # User-blocked custom domains (all resource types, priority 2)
     for raw_dom in profile.extra_blocked_domains:
-        clean = raw_dom.strip().lower().lstrip(".")
+        clean = normalize_shield_domain(raw_dom)
         if clean and clean not in seen_domains and len(rules) < max_rules:
             seen_domains.add(clean)
             rules.append(

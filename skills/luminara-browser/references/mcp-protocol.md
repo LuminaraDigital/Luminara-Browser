@@ -1,4 +1,4 @@
-# Luminara Browser MCP v2 Protocol Reference (`2025-06-18` · `v3.0.0`)
+# Luminara Browser MCP v2 Protocol Reference (`2025-06-18` · `v3.1.0`)
 
 Endpoint: `POST http://127.0.0.1:8796/api/agent/mcp`  
 Content-Type: `application/json`  
@@ -218,7 +218,69 @@ Optional Auth Header (when `LUMINARA_AGENT_TOKEN` is configured): `Authorization
 }
 ```
 
-## 12. Read MCP v2 Resources (`luminara://*`)
+## 12. Call `browser_sequence_guard`, `browser_vrt_isolation`, `browser_monitors` & `browser_search_eval` (`v3.1.0`)
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 14,
+  "method": "tools/call",
+  "params": {
+    "name": "browser_sequence_guard",
+    "arguments": { "action": "export_casebundle" }
+  }
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 15,
+  "method": "tools/call",
+  "params": {
+    "name": "browser_vrt_isolation",
+    "arguments": {
+      "action": "lock_origins",
+      "declared_origins": ["https://app.example.org"]
+    }
+  }
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 16,
+  "method": "tools/call",
+  "params": {
+    "name": "browser_monitors",
+    "arguments": {
+      "action": "create",
+      "name": "Pricing Watch",
+      "target_url": "https://example.org/pricing",
+      "extract_selector": "body"
+    }
+  }
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 17,
+  "method": "tools/call",
+  "params": {
+    "name": "browser_search_eval",
+    "arguments": {
+      "action": "run_suite",
+      "suite": "extraction",
+      "providers": ["luminara", "perplexity"]
+    }
+  }
+}
+```
+
+## 13. Read MCP v2 Resources (`luminara://*`)
 
 Available URIs:
 - `luminara://tabs/live`
@@ -228,11 +290,13 @@ Available URIs:
 - `luminara://playbooks/list`
 - `luminara://workspaces/list`
 - `luminara://mutations/status`
+- `luminara://security/sequences`
+- `luminara://monitors/runs`
 
 ```json
 {
   "jsonrpc": "2.0",
-  "id": 14,
+  "id": 18,
   "method": "resources/read",
   "params": {
     "uri": "luminara://ledger/verify"

@@ -39,8 +39,14 @@ def make_studio_handler(
     profile_path = forge_root / "fork.json"
     overlay_dir = forge_root / "overlay"
     dist_root = forge_root / "dist"
-    cache_zip = forge_root / "cache" / "ungoogled-chromium_157.0.8103.50-1.1_windows_x64.zip"
+    default_cache_zip = forge_root / "cache" / "ungoogled-chromium_157.0.8103.50-1.1_windows_x64.zip"
     ui_key = ensure_local_ui_key(forge_root)
+
+    def _resolve_cache_zip() -> Path:
+        if default_cache_zip.exists():
+            return default_cache_zip
+        zips = sorted((forge_root / "cache").glob("ungoogled-chromium_*_windows_*.zip"))
+        return zips[-1] if zips else default_cache_zip
 
     def _current_profile() -> ForkProfile:
         if profile_path.exists():
@@ -50,6 +56,16 @@ def make_studio_handler(
         return default
 
     def _read_overlay_artifacts(prof: ForkProfile) -> dict[str, str]:
+        if not (upstream_core_repo / "patches").is_dir() or not upstream_win_repo.is_dir():
+            note = "# Upstream ungoogled-chromium patch tree not present in standalone mode (pass --core-repo / --windows-repo)."
+            return {
+                "branding_patch": note,
+                "search_patch": note,
+                "network_trap_patch": note,
+                "domain_regex": note,
+                "args_gn": note,
+                "cloud_workflow": note,
+            }
         paths = compile_fork_overlay(prof, upstream_core_repo, upstream_win_repo, overlay_dir)
         return {
             "branding_patch": paths["branding_patch"].read_text(encoding=ENCODING),
@@ -87,6 +103,7 @@ def make_studio_handler(
                         except json.JSONDecodeError:
                             rea_report = None
                     portable_exe = dist_root / f"{prof.slug}-win64" / "App" / "chrome.exe"
+                    cz = _resolve_cache_zip()
                     self.send_json(
                         {
                             "profile": prof.to_dict(),
@@ -94,9 +111,9 @@ def make_studio_handler(
                             "artifacts": artifacts,
                             "rea_report": rea_report,
                             "portable_status": {
-                                "zip_cached": cache_zip.exists(),
-                                "zip_size_mb": round(cache_zip.stat().st_size / 1_048_576, 1)
-                                if cache_zip.exists()
+                                "zip_cached": cz.exists(),
+                                "zip_size_mb": round(cz.stat().st_size / 1_048_576, 1)
+                                if cz.exists()
                                 else 0,
                                 "built": portable_exe.exists(),
                                 "dist_dir": str((dist_root / f"{prof.slug}-win64").resolve()),
@@ -134,16 +151,16 @@ def make_studio_handler(
 
                 if parsed.path == "/api/build-portable":
                     prof = _current_profile()
-                    result = assemble_portable_distribution(cache_zip, prof, dist_root)
+                    result = assemble_portable_distribution(_resolve_cache_zip(), prof, dist_root, forge_root=forge_root)
                     self.send_json({"ok": True, "result": result})
                     return
 
                 if parsed.path == "/api/launch-browser":
                     prof = _current_profile()
+                    cz = _resolve_cache_zip()
                     dist_dir = (dist_root / f"{prof.slug}-win64").resolve()
                     chrome_exe = dist_dir / "App" / "chrome.exe"
-                    if cache_zip.exists() or not chrome_exe.exists():
-                        assemble_portable_distribution(cache_zip, prof, dist_root)
+                    assemble_portable_distribution(cz, prof, dist_root, forge_root=forge_root)
 
                     creation_flags = (
                         getattr(subprocess, "DETACHED_PROCESS", 0)
@@ -158,6 +175,8 @@ def make_studio_handler(
                                 "-m",
                                 "forge",
                                 "agent-daemon",
+                                "--forge-root",
+                                str(forge_root),
                                 "--port",
                                 str(prof.agent_port),
                                 "--cdp-port",
@@ -175,10 +194,12 @@ def make_studio_handler(
                             time.sleep(0.1)
 
                     ext_paths = [str(dist_dir / "App" / "extensions" / "forge-shield")]
-                    for ext_name in ("luminara-copilot", "luminara-newtab"):
+                    ext_names = ("luminara-copilot", "luminara-newtab") if prof.enable_agent_cobrowsing else ("luminara-newtab",)
+                    for ext_name in ext_names:
                         ext_candidate = dist_dir / "App" / "extensions" / ext_name
                         if ext_candidate.exists():
                             ext_paths.append(str(ext_candidate))
+                    default_home = "chrome://newtab" if prof.enable_agent_cobrowsing else "about:blank"
                     extra_cdp = (
                         [
                             f"--remote-debugging-port={prof.cdp_port}",
@@ -193,7 +214,7 @@ def make_studio_handler(
                         f"--load-extension={','.join(ext_paths)}",
                         *prof.runtime_switches(),
                         *extra_cdp,
-                        "chrome://newtab",
+                        default_home,
                     ]
                     subprocess.Popen(cmd, creationflags=creation_flags, close_fds=True)
                     self.send_json({"ok": True, "launched": str(chrome_exe), "cdp_port": prof.cdp_port})

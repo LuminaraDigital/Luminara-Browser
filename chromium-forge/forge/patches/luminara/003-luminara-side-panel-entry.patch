@@ -1,0 +1,22 @@
+--- a/chrome/browser/ui/views/side_panel/side_panel_coordinator.h
++++ b/chrome/browser/ui/views/side_panel/side_panel_coordinator.h
+@@ -56,6 +56,10 @@
+                 gfx::Rect starting_bounds_in_browser_coordinates) override;
+   void OverrideContentsWidth(int width) override;
+   void ResetContentsWidthOverride() override;
++
++  // Luminara Browser: Native Split-View Co-Browsing width & Copilot pin hook.
++  bool IsLuminaraCopilotPinned() const { return luminara_copilot_pinned_; }
++  void SetLuminaraCopilotPinned(bool pinned) { luminara_copilot_pinned_ = pinned; }
+ 
+   // SidePanelUIBase:
+   using SidePanelUIBase::Show;
+@@ -110,6 +114,8 @@
+ 
+   base::ScopedObservation<views::View, views::ViewObserver>
+       side_panel_observation_{this};
++
++  bool luminara_copilot_pinned_ = true;
+ };
+ 
+ #endif  // CHROME_BROWSER_UI_VIEWS_SIDE_PANEL_SIDE_PANEL_COORDINATOR_H_

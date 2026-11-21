@@ -257,12 +257,31 @@ luminara.emit({"clicked": len(snap["snapshot"]["elements"]), "ext_ok": ext["ok"]
                 workspace_id="research",
                 url="https://app.example.com/#access_token=frag_secret_777",
                 title="Page sk-proj-1234567890abcdefghijklmnop",
-                rows=[{"name": "C", "secret": "Bearer sk-proj-1234567890abcdefghijklmnop"}],
+                rows=[{"name": "東京 C", "secret": "Bearer sk-proj-1234567890abcdefghijklmnop", "long_blob": "x" * 4000}],
             )
             raw_sqlite = kg_db.read_bytes()
             self.assertNotIn(b"frag_secret_777", raw_sqlite)
             self.assertNotIn(b"sk-proj-1234567890abcdefghijklmnop", raw_sqlite)
             self.assertEqual(len(kg.search_knowledge("C", workspace_id=None)), 1)
+            self.assertEqual(len(kg.search_knowledge("東京", workspace_id=None)), 1)
+
+        # Verify f-string format-width OOM guard, '_' unpacking, positional act(), otpauth:// TOTP, & public 0x/01 domains
+        with self.assertRaises(ValueError):
+            validate_pipeline_ast('x = f"{1:1000000000}"')
+        unpack_res = runner.run_pipeline(
+            script="for _, item in enumerate([1]):\n    luminara.act('click', item)\nresult = {'ok': True}"
+        )
+        self.assertEqual(unpack_res["outputs"][0], {"ok": True})
+        self.assertEqual(
+            generate_totp_code("otpauth://totp/Luminara:ops@example.com?secret=JBSWY3DPEHPK3PXP&period=30&digits=6", timestamp=1700000000),
+            generate_totp_code("JBSWY3DPEHPK3PXP=", timestamp=1700000000),
+        )
+        self.assertEqual(validate_navigation_url("https://0x.org/protocol"), "https://0x.org/protocol")
+        self.assertEqual(validate_navigation_url("https://www.01net.com/"), "https://www.01net.com/")
+        with self.assertRaises(CDPError):
+            validate_navigation_url("http://0x7f.0.0.1:9229/")
+        with self.assertRaises(CDPError):
+            validate_navigation_url("http://example.com:99999/")
 
         def gate_dispatch(tool_name: str, args: dict[str, object]) -> dict[str, object]:
             return {"snapshot": {"gate_detected": "human_verification_gate", "elements": []}}
@@ -467,6 +486,7 @@ luminara.emit({"clicked": len(snap["snapshot"]["elements"]), "ext_ok": ext["ok"]
             )
             self.assertTrue(reg["ok"])
             self.assertNotIn("NeverShowThisPassword!99", json.dumps(reg))
+            rt.close()
 
     def test_zero_third_party_branding_and_mit_clean_room_compliance(self) -> None:
         """Verify zero third-party agent/company branding exists in Luminara Browser source, docs, or skills."""
@@ -578,6 +598,7 @@ luminara.emit({"clicked": len(snap["snapshot"]["elements"]), "ext_ok": ext["ok"]
             )
             try:
                 rt = LuminaraAgentRuntime(tmp_path, cdp_port=cdp_port)
+                rt.goals.router.use_env_providers = False
                 self.assertTrue(
                     wait_for_cdp_page_ready(
                         rt.cdp,
@@ -689,6 +710,242 @@ luminara.emit({"clicked": len(snap["snapshot"]["elements"]), "ext_ok": ext["ok"]
                 terminate_browser_process(proc)
                 web_srv.shutdown()
                 web_srv.server_close()
+
+    def test_adversarial_zero_defect_regressions(self) -> None:
+        """Guard TASK-015 & TASK-016 adversarial security, DOM, crypto, FTS5, DNR, and CLI fixes."""
+        import secrets
+
+        from forge import cli as forge_cli
+        from forge.cdp_client import CDPError, validate_navigation_url
+        from forge.chromium_src import verify_patches_against_upstream
+        from forge.knowledge_graph import KnowledgeWorkspaceStore
+        from forge.luminara_automation import validate_pipeline_ast
+        from forge.luminara_security import LuminaraRedactor, generate_totp_code
+        from forge.shield_compiler import normalize_shield_domain, strip_tracking_params_url
+        from forge.updater import load_manifest_source, sign_release_manifest
+
+        # 1. Public hex/leading-zero hostnames allowed; numeric/octal/hex IPv4 & bad ports blocked
+        self.assertEqual(validate_navigation_url("https://0x.org/docs"), "https://0x.org/docs")
+        self.assertEqual(validate_navigation_url("https://www.01net.com/"), "https://www.01net.com/")
+        for bad_url in ("http://0x7f.0.0.1:9229/", "http://0177.0.0.1:9229/", "http://example.com:99999/"):
+            with self.assertRaises(CDPError):
+                validate_navigation_url(bad_url)
+
+        # 2. otpauth:// URI + padded Base32 TOTP + lum2.* session token & list-header redaction
+        otp_uri = "otpauth://totp/Luminara:ops@example.com?secret=JBSWY3DPEHPK3PXP====&algorithm=SHA256&digits=8&period=30"
+        code8 = generate_totp_code(otp_uri, timestamp=1700000000)
+        self.assertEqual(len(code8), 8)
+        self.assertTrue(code8.isdigit())
+        red = LuminaraRedactor()
+        scrubbed = red.redact_payload(
+            {
+                "tok": "lum2.eyJleHAiOjE5MDAwMDAwMDB9.abcdef0123456789abcdef0123456789",
+                "Set-Cookie": ["sid=secret123; HttpOnly", "csrf=tok456"],
+            }
+        )
+        self.assertNotIn("lum2.", scrubbed["tok"])
+        self.assertEqual(scrubbed["Set-Cookie"], ["[REDACTED:HEADER_SECRET]", "[REDACTED:HEADER_SECRET]"])
+
+        # 3. AST f-string width OOM guard vs allowed `_` throwaway
+        with self.assertRaises(ValueError):
+            validate_pipeline_ast('x = f"{1:1000000000}"')
+        validate_pipeline_ast("_ = 42\nluminara.emit({'ok': _})")
+
+        # 4. Unicode FTS5 (prefix + mid-phrase CJK) & valid JSON truncation on oversized entity rows
+        with tempfile.TemporaryDirectory() as tmp:
+            tdir = Path(tmp)
+            ks = KnowledgeWorkspaceStore(tdir / "kg.sqlite3", redactor=red)
+            ks.index_entities(
+                workspace_id="unicode_ws",
+                url="https://jp.example.com",
+                title="東京データセンター",
+                rows=[{"name": "東京 GPU クラスタ", "notes": "X" * 5000}],
+            )
+            hits = ks.search_knowledge("東京", workspace_id="unicode_ws")
+            self.assertEqual(len(hits), 1)
+            self.assertIsInstance(hits[0]["entity"], dict)
+            mid_cjk_hits = ks.search_knowledge("データセンター", workspace_id="unicode_ws")
+            self.assertEqual(len(mid_cjk_hits), 1)
+
+            # 5. Zero-patch directory fails closed (`ok: False`)
+            empty_rep = verify_patches_against_upstream(tdir / "empty_patches", tdir / "no_src")
+            self.assertFalse(empty_rep["ok"])
+
+            # 6. `sign-manifest` + `check-updates` CLI round-trip & short key / HTTP URL guards
+            art = tdir / "Luminara-Test.zip"
+            art.write_bytes(b"PK\x03\x04luminara-portable-test")
+            import hashlib as _hl
+
+            art_sha = _hl.sha256(art.read_bytes()).hexdigest()
+            manifest_out = tdir / "release-manifest.json"
+            key_hex = secrets.token_hex(32)
+            rc_sign = forge_cli.main(
+                [
+                    "--forge-root",
+                    str(Path(__file__).resolve().parent.parent),
+                    "sign-manifest",
+                    "--version",
+                    "3.0.0",
+                    "--artifact-name",
+                    art.name,
+                    "--artifact-sha256",
+                    art_sha,
+                    "--signing-key-hex",
+                    key_hex,
+                    "--out",
+                    str(manifest_out),
+                ]
+            )
+            self.assertEqual(rc_sign, 0)
+            rc_chk = forge_cli.main(
+                [
+                    "check-updates",
+                    "--manifest",
+                    str(manifest_out),
+                    "--artifact",
+                    str(art),
+                    "--signing-key-hex",
+                    key_hex,
+                ]
+            )
+            self.assertEqual(rc_chk, 0)
+            with self.assertRaises(ValueError):
+                sign_release_manifest({"version": "3.0.0"}, b"short-key")
+            with self.assertRaises(ValueError):
+                load_manifest_source("http://example.com/release-manifest.json")
+
+        # 7. Shield domain sanitizer + twclid/ttclid query-param stripping
+        self.assertEqual(normalize_shield_domain("||Track.Example.COM^$third-party"), "track.example.com")
+        self.assertIsNone(normalize_shield_domain("not a valid domain / *"))
+        cleaned_url = strip_tracking_params_url("https://example.com/p?id=7&twclid=abc&ttclid=xyz")
+        self.assertEqual(cleaned_url, "https://example.com/p?id=7")
+
+    def test_10_task017_to_020_gurl_ssrf_runtime_sandbox_mcp_ui_and_release_scrub(self) -> None:
+        import base64
+        import threading
+        import urllib.error
+        import urllib.request
+        import zipfile
+        from forge import cli as forge_cli
+        from forge.luminara_ui import build_luminara_newtab_html, build_luminara_workspace_html, write_copilot_extension
+        from forge.models import ForkProfile
+        from forge.portable import assemble_portable_distribution
+        from forge.webmcp import validate_webmcp_arguments
+
+        # 1. WHATWG GURL vs RFC 3986 SSRF differentials blocked fail-closed
+        for ssrf_url in (
+            "http://127.0.0.1:8796\\@example.com/",
+            "http://%31%32%37.0.0.1:8796/",
+            "http://127\u30020\u30020\u30021/",
+            "http://\u2460\u2461\u2466.0.0.1/",
+            "http://[::1%25eth0]/",
+            "http://[2002:7f00:0001::]/",
+        ):
+            with self.assertRaises(CDPError, msg=f"Failed to block SSRF differential: {ssrf_url!r}"):
+                validate_navigation_url(ssrf_url)
+
+        # 2. AST & runtime sys.settrace sandbox guards (% format, loop depth > 2, exponential doubling)
+        for ast_bad in (
+            "s = '%99999999s' % 'x'",
+            "for a in [1]:\n  for b in [1]:\n    for c in [1]:\n      pass",
+            "x = 'a'.zfill(9999999)",
+        ):
+            with self.assertRaises(ValueError):
+                validate_pipeline_ast(ast_bad)
+        sb = PipelineSandboxRunner(lambda _n, _a: {"ok": True})
+        with self.assertRaises((ValueError, RuntimeError)):
+            sb.run_pipeline(script="x = 'A' * 1024\nfor _ in range(25):\n    x = x + x\nresult = len(x)")
+
+        # 3. Redactor scrubs sets, non-finite floats, quote_plus secrets, and registered secrets in binary leaves
+        red = LuminaraRedactor()
+        red.register_secret("TopSecretVaultPass!99")
+        b64_secret = base64.b64encode(b"prefix TopSecretVaultPass!99 suffix").decode("ascii")
+        scrubbed = red.redact_payload(
+            {
+                "set_secrets": {"sk-proj-abcdefghijklmnopqrstuvwxyz123456"},
+                "nan_val": float("nan"),
+                "form_body": "user=alice&password=MyFormPassword%2BSecret%21",
+                "data_base64": b64_secret,
+            }
+        )
+        self.assertIsNone(scrubbed["nan_val"])
+        self.assertNotIn("sk-proj-", json.dumps(scrubbed))
+        self.assertNotIn("MyFormPassword", json.dumps(scrubbed))
+        self.assertEqual(scrubbed["data_base64"], "[REDACTED:BINARY_CONTAINING_SECRET]")
+
+        # 4. WebMCP schema enforcement & boolean string coercion
+        coerced = validate_webmcp_arguments(
+            {"type": "object", "required": ["tier"], "properties": {"tier": {"enum": ["pro", "team"]}, "agree": {"type": "boolean"}}},
+            {"tier": "pro", "agree": "false"},
+        )
+        self.assertIs(coerced["agree"], False)
+        with self.assertRaises(ValueError):
+            validate_webmcp_arguments({"type": "object", "required": ["tier"]}, {})
+
+        # 5. Agent cannot self-approve mutations without X-Luminara-UI-Key + strict MCP JSON-RPC framing
+        with tempfile.TemporaryDirectory(prefix="lum_t20_") as td:
+            tpath = Path(td)
+            rt = LuminaraAgentRuntime(tpath / "state", cdp_port=65521)
+            rt.passport_token = "agent-bearer-passport-777"
+            rt.goals.router.use_env_providers = False
+            srv = create_agent_http_server(rt, host="127.0.0.1", port=0)
+            port = srv.server_port
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+            try:
+                # Bearer-only POST /api/agent/mutations -> 403 (requires human X-Luminara-UI-Key!)
+                req_mut = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/api/agent/mutations",
+                    data=b'{"action":"approve","mutation_id":"MUT-1"}',
+                    headers={"Content-Type": "application/json", "Authorization": "Bearer agent-bearer-passport-777"},
+                    method="POST",
+                )
+                with self.assertRaises(urllib.error.HTTPError) as mut_err:
+                    urllib.request.urlopen(req_mut, timeout=5.0)
+                self.assertEqual(mut_err.exception.code, 403)
+                mut_err.exception.close()
+
+                # Invalid JSON-RPC version -> -32600 Invalid Request envelope
+                req_rpc = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/api/agent/mcp",
+                    data=b'{"jsonrpc":"1.0","id":9,"method":"tools/list"}',
+                    headers={"Content-Type": "application/json", "Authorization": "Bearer agent-bearer-passport-777"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req_rpc, timeout=5.0) as rpc_resp:
+                    rpc_body = json.loads(rpc_resp.read().decode("utf-8"))
+                self.assertEqual(rpc_body["error"]["code"], -32600)
+            finally:
+                srv.shutdown()
+                srv.server_close()
+                rt.close()
+
+            # 6. UI, MV3 Copilot, standalone CLI & --release scrubbing verification
+            prof = ForkProfile()
+            ntp = build_luminara_newtab_html(prof, ui_key="k" * 64)
+            ws = build_luminara_workspace_html(prof, ui_key="k" * 64)
+            self.assertIn('id="mutationBanner"', ntp)
+            self.assertIn('id="vaultRegForm"', ntp)
+            self.assertIn("attachShadow", ntp)
+            self.assertIn('id="wsAuthBar"', ws)
+            ext_out = tpath / "copilot_ext"
+            write_copilot_extension(ext_out, prof, ui_key="k" * 64)
+            self.assertIn("resolveActiveTargetId", (ext_out / "sidepanel.js").read_text(encoding="utf-8"))
+
+            # Release-scrubbed portable build contains zero local_ui_key.txt & empty UI_KEY
+            fake_zip = tpath / "fake_chrome.zip"
+            mz_stub = b"MZ" + b"\x00" * 58 + (64).to_bytes(4, "little") + b"PE\x00\x00" + (0x8664).to_bytes(2, "little") + (1).to_bytes(2, "little") + b"\x00" * 32
+            with zipfile.ZipFile(fake_zip, "w") as zf:
+                zf.writestr("ungoogled-chromium_win64/chrome.exe", mz_stub)
+            rel_res = assemble_portable_distribution(fake_zip, prof, tpath / "dist_rel", forge_root=tpath / "state", release_scrub=True)
+            rel_dir = Path(str(rel_res["dist_dir"]))
+            self.assertFalse((rel_dir / "Agent" / "outputs" / "local_ui_key.txt").exists())
+            self.assertIn('const UI_KEY = "";', (rel_dir / "App" / "luminara_pages" / "newtab.html").read_text(encoding="utf-8"))
+
+            # Out-of-repo standalone init + verify-upstream-patches (zero ungoogled-chromium sibling)
+            standalone = tpath / "standalone_root"
+            standalone.mkdir(parents=True, exist_ok=True)
+            self.assertEqual(forge_cli.main(["--forge-root", str(standalone), "init"]), 0)
+            self.assertEqual(forge_cli.main(["--forge-root", str(standalone), "verify-upstream-patches"]), 0)
 
 
 if __name__ == "__main__":

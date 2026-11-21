@@ -38,6 +38,7 @@ from .patcher import apply_patch_series, audit_patch_directory
 from .portable import inspect_pe_machine_header, smoke_test_portable_headless
 from .pruner import KEEP_FILES, prune_source_tree
 from .verifier_agentic import run_agentic_live_verification
+from .verifier_perplexity import run_perplexity_rea_obligations
 
 ENCODING = "utf-8"
 
@@ -385,6 +386,7 @@ def run_rea_verification_suite(
 
     if not static_only:
         results.extend(run_agentic_live_verification(forge_root, active_profile))
+    results.extend(run_perplexity_rea_obligations(forge_root))
 
     report = {
         "target_chromium_version": chromium_ver,

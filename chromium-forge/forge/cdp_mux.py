@@ -15,15 +15,196 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import Future
+import base64
+import hashlib
 import json
+import os
 import queue
+import socket
+import struct
 import threading
 import time
 from typing import Any
+import urllib.parse
+
+ENCODING = "utf-8"
 
 
-class CDPMuxError(RuntimeError):
+class CDPError(RuntimeError):
+    """Raised when a CDP target, URL guard, or WebSocket command returns an error."""
+
+
+class CDPMuxError(CDPError):
     """Raised on multiplexed CDP transport, timeout, or protocol errors."""
+
+
+def _xor_mask(data: bytes, mask_key: bytes) -> bytes:
+    """Fast bulk XOR masking using C-implemented `int.from_bytes` (~50x faster than per-byte loops)."""
+    n = len(data)
+    if n == 0:
+        return b""
+    repeated = (mask_key * ((n // 4) + 1))[:n]
+    return (int.from_bytes(data, "big") ^ int.from_bytes(repeated, "big")).to_bytes(n, "big")
+
+
+class _RFC6455Socket:
+    """Minimal RFC 6455 client WebSocket over loopback TCP (zero external dependencies)."""
+
+    MAX_HANDSHAKE_BYTES = 65536
+    MAX_FRAME_BYTES = 32 * 1024 * 1024
+
+    def __init__(self, ws_url: str, timeout: float = 15.0) -> None:
+        parsed = urllib.parse.urlparse(ws_url)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 80
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+
+        try:
+            self._sock = socket.create_connection((host, port), timeout=timeout)
+            key = base64.b64encode(os.urandom(16)).decode("ascii")
+            handshake = (
+                f"GET {path} HTTP/1.1\r\n"
+                f"Host: {host}:{port}\r\n"
+                "Upgrade: websocket\r\n"
+                "Connection: Upgrade\r\n"
+                f"Sec-WebSocket-Key: {key}\r\n"
+                "Sec-WebSocket-Version: 13\r\n"
+                f"Origin: http://{host}:{port}\r\n\r\n"
+            )
+            self._sock.sendall(handshake.encode("ascii"))
+
+            header_buf = bytearray()
+            while b"\r\n\r\n" not in header_buf:
+                if len(header_buf) > self.MAX_HANDSHAKE_BYTES:
+                    self._sock.close()
+                    raise CDPError("CDP WebSocket handshake headers exceeded 64 KiB")
+                chunk = self._sock.recv(4096)
+                if not chunk:
+                    self._sock.close()
+                    raise CDPError("EOF during CDP WebSocket handshake")
+                header_buf.extend(chunk)
+        except (TimeoutError, OSError) as exc:
+            sock = getattr(self, "_sock", None)
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+            raise CDPError(f"CDP WebSocket connect error: {exc}") from exc
+
+        sep = header_buf.index(b"\r\n\r\n")
+        status_line = header_buf[:sep].splitlines()[0].decode("ascii", errors="replace")
+        if "101" not in status_line:
+            self._sock.close()
+            raise CDPError(f"CDP WebSocket upgrade rejected: {status_line}")
+
+        expected_accept = base64.b64encode(
+            hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("ascii")).digest()
+        ).decode("ascii")
+        if expected_accept.encode("ascii") not in header_buf[:sep]:
+            self._sock.close()
+            raise CDPError("Invalid Sec-WebSocket-Accept in CDP handshake")
+
+        self._rx_buf = bytearray(header_buf[sep + 4 :])
+        self._send_lock = threading.Lock()
+
+    def set_remaining_timeout(self, remaining: float) -> None:
+        self._sock.settimeout(max(0.05, remaining))
+
+    def clear_timeout(self) -> None:
+        self._sock.settimeout(None)
+
+    def _read_exact(self, count: int) -> bytes:
+        try:
+            while len(self._rx_buf) < count:
+                chunk = self._sock.recv(65536)
+                if not chunk:
+                    raise CDPError("CDP WebSocket closed unexpectedly")
+                self._rx_buf.extend(chunk)
+        except (TimeoutError, OSError) as exc:
+            raise CDPError(f"CDP WebSocket read timeout/error: {exc}") from exc
+        out = bytes(self._rx_buf[:count])
+        del self._rx_buf[:count]
+        return out
+
+    def send_text(self, text: str) -> None:
+        payload = text.encode(ENCODING)
+        mask_key = os.urandom(4)
+        length = len(payload)
+        header = bytearray([0x81])
+        if length < 126:
+            header.append(0x80 | length)
+        elif length < 65536:
+            header.append(0x80 | 126)
+            header.extend(struct.pack("!H", length))
+        else:
+            header.append(0x80 | 127)
+            header.extend(struct.pack("!Q", length))
+        header.extend(mask_key)
+        frame_bytes = bytes(header) + _xor_mask(payload, mask_key)
+        try:
+            with self._send_lock:
+                self._sock.sendall(frame_bytes)
+        except (TimeoutError, OSError) as exc:
+            raise CDPError(f"CDP WebSocket write error: {exc}") from exc
+
+    def recv_text(self) -> str:
+        fragments: list[bytes] = []
+        total_bytes = 0
+        while True:
+            b0, b1 = self._read_exact(2)
+            fin = bool(b0 & 0x80)
+            opcode = b0 & 0x0F
+            masked = bool(b1 & 0x80)
+            length = b1 & 0x7F
+            if length == 126:
+                length = struct.unpack("!H", self._read_exact(2))[0]
+            elif length == 127:
+                length = struct.unpack("!Q", self._read_exact(8))[0]
+            if length > self.MAX_FRAME_BYTES or total_bytes + length > self.MAX_FRAME_BYTES:
+                raise CDPError(f"CDP WebSocket frame exceeded {self.MAX_FRAME_BYTES} byte safety cap")
+            mask_key = self._read_exact(4) if masked else b""
+            data = self._read_exact(length)
+            if masked:
+                data = _xor_mask(data, mask_key)
+
+            if opcode == 0x8:
+                raise CDPError("CDP WebSocket closed by browser")
+            if opcode == 0x9:
+                pong_body = data[:125]
+                m = os.urandom(4)
+                pong = bytes([0x8A, 0x80 | len(pong_body)]) + m + _xor_mask(pong_body, m)
+                try:
+                    with self._send_lock:
+                        self._sock.sendall(pong)
+                except (TimeoutError, OSError) as exc:
+                    raise CDPError(f"CDP Pong write error: {exc}") from exc
+                continue
+            if opcode == 0xA:
+                continue
+            if opcode == 0x0 and not fragments:
+                raise CDPError("Unexpected WebSocket continuation frame without initial data frame")
+            if opcode in (0x1, 0x2) and fragments:
+                raise CDPError("Unexpected new WebSocket data frame while fragmented message is incomplete")
+            if opcode in (0x0, 0x1, 0x2):
+                total_bytes += len(data)
+                fragments.append(data)
+                if fin:
+                    return b"".join(fragments).decode(ENCODING, errors="replace")
+                continue
+            raise CDPError(f"Unsupported WebSocket frame opcode: 0x{opcode:x}")
+
+    def close(self) -> None:
+        try:
+            self._sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
+            self._sock.close()
+        except OSError:
+            pass
 
 
 EventCallback = Callable[[dict[str, Any]], None]
@@ -55,6 +236,7 @@ class MultiplexedCDPPool:
 
         self._next_id = 1
         self._pending: dict[int, Future[dict[str, Any]]] = {}
+        self._pending_session: dict[int, str] = {}
         self._sessions: dict[str, str] = {}  # target_id -> session_id
         self._session_to_target: dict[str, str] = {}  # session_id -> target_id
 
@@ -155,6 +337,7 @@ class MultiplexedCDPPool:
         with self._state_lock:
             pending_items = list(self._pending.values())
             self._pending.clear()
+            self._pending_session.clear()
             self._sessions.clear()
             self._session_to_target.clear()
         err = CDPMuxError(reason)
@@ -189,6 +372,7 @@ class MultiplexedCDPPool:
                 req_id = int(frame["id"])
                 with self._state_lock:
                     fut = self._pending.pop(req_id, None)
+                    self._pending_session.pop(req_id, None)
                 if fut is not None and not fut.done():
                     if "error" in frame:
                         fut.set_exception(CDPMuxError(f"CDP error: {frame['error']}"))
@@ -201,6 +385,8 @@ class MultiplexedCDPPool:
                 self._dispatch_event(method, frame.get("params") or {}, frame.get("sessionId"))
 
     def _dispatch_event(self, method: str, params: dict[str, Any], session_id: str | None) -> None:
+        aborted_futs: list[Future[dict[str, Any]]] = []
+        abort_reason = ""
         with self._state_lock:
             self._event_seq += 1
             self._stats["events_received"] += 1
@@ -210,6 +396,27 @@ class MultiplexedCDPPool:
                 old_tid = self._session_to_target.pop(detached_sid, None)
                 if old_tid and self._sessions.get(old_tid) == detached_sid:
                     self._sessions.pop(old_tid, None)
+                target_id = target_id or old_tid or str(params.get("targetId") or "")
+                if detached_sid:
+                    abort_reason = f"CDP target session detached ({detached_sid})"
+                    stale_ids = [rid for rid, sid in self._pending_session.items() if sid == detached_sid]
+                    for rid in stale_ids:
+                        self._pending_session.pop(rid, None)
+                        f = self._pending.pop(rid, None)
+                        if f is not None:
+                            aborted_futs.append(f)
+            elif method == "Inspector.targetCrashed" and session_id:
+                old_tid = self._session_to_target.pop(session_id, None)
+                if old_tid and self._sessions.get(old_tid) == session_id:
+                    self._sessions.pop(old_tid, None)
+                target_id = target_id or old_tid or ""
+                abort_reason = f"CDP target renderer crashed ({session_id})"
+                stale_ids = [rid for rid, sid in self._pending_session.items() if sid == session_id]
+                for rid in stale_ids:
+                    self._pending_session.pop(rid, None)
+                    f = self._pending.pop(rid, None)
+                    if f is not None:
+                        aborted_futs.append(f)
             elif method == "Target.attachedToTarget":
                 attached_sid = str(params.get("sessionId") or "")
                 t_info = params.get("targetInfo") or {}
@@ -228,6 +435,12 @@ class MultiplexedCDPPool:
             }
             self._events.append(event)
             callbacks = list(self._subscribers.get(method, [])) + list(self._subscribers.get("*", []))
+
+        if aborted_futs:
+            err = CDPMuxError(abort_reason)
+            for f in aborted_futs:
+                if not f.done():
+                    f.set_exception(err)
 
         if callbacks:
             try:
@@ -250,6 +463,8 @@ class MultiplexedCDPPool:
             self._next_id += 1
             fut: Future[dict[str, Any]] = Future()
             self._pending[req_id] = fut
+            if session_id:
+                self._pending_session[req_id] = session_id
             self._stats["commands_sent"] += 1
 
         envelope: dict[str, Any] = {"id": req_id, "method": method, "params": params or {}}

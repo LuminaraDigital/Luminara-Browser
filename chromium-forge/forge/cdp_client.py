@@ -11,58 +11,82 @@ Hardened for concurrent multi-agent & parallel `BulkEngine` workloads:
 
 from __future__ import annotations
 
-import base64
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
-import hashlib
 import ipaddress
 import json
 import os
 import re
-import socket
-import struct
 import subprocess
 import threading
 import time
 from typing import Any
+import unicodedata
 import urllib.parse
 import urllib.request
 
-from .cdp_mux import CDPMuxError, MultiplexedCDPPool
+from .cdp_mux import CDPError, CDPMuxError, MultiplexedCDPPool, _RFC6455Socket, _xor_mask
 
 ENCODING = "utf-8"
-_BLOCKED_NAV_SCHEMES = frozenset({"javascript", "vbscript", "data", "chrome", "chrome-extension", "devtools", "view-source"})
+_BLOCKED_NAV_SCHEMES = frozenset({"javascript", "vbscript", "data", "chrome", "chrome-extension", "devtools", "view-source", "luminara"})
 _INTERNAL_CONTROL_PORTS = frozenset({8795, 8796, 9229})
 _CLOUD_METADATA_HOSTS = frozenset({"169.254.169.254", "metadata.google.internal", "100.100.100.200", "fd00:ec2::254"})
-_OCTAL_OR_HEX_SEG_RE = re.compile(r"(?:^|\.)(?:0\d|0x)", re.IGNORECASE)
+_NUMERIC_OR_HEX_LABEL_RE = re.compile(r"^(?:0x[0-9a-f]+|\d+)$", re.IGNORECASE)
 _NUMERIC_DOTTED_RE = re.compile(r"^[\d.]+$")
+_IDNA_DOTS_MAP = str.maketrans({"\u3002": ".", "\uff0e": ".", "\uff61": "."})
 
 
-class CDPError(RuntimeError):
-    """Raised when a CDP target, URL guard, or WebSocket command returns an error."""
+def is_internal_browser_url(url: str, *, cdp_port: int | None = None) -> bool:
+    """Canonical check for internal browser, extension, Studio (:8795), or Agent (:8796) surfaces."""
+    u = (url or "").strip()
+    if not u or u == "about:blank":
+        return True
+    low = u.lower()
+    if low.startswith(("chrome://", "chrome-extension://", "devtools://", "luminara://", "view-source:")):
+        return True
+    if "luminara_pages/" in low or "forge_ntp/" in low:
+        return True
+    parsed = urllib.parse.urlsplit(low)
+    host = (parsed.hostname or "").rstrip(".")
+    if host in ("127.0.0.1", "localhost", "::1"):
+        try:
+            port = parsed.port
+        except ValueError:
+            return True
+        blocked = {8795, 8796} | ({cdp_port} if cdp_port else set())
+        if port in blocked or parsed.path.startswith(("/newtab", "/ui/newtab", "/workspace", "/ui/workspace")):
+            return True
+    return False
+
+
+def _unwrap_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            return ip.ipv4_mapped
+        if ip.sixtofour is not None:
+            return ip.sixtofour
+        raw_int = int(ip)
+        if ip not in (ipaddress.IPv6Address("::1"), ipaddress.IPv6Address("::")) and 0 < raw_int <= 0xFFFFFFFF:
+            return ipaddress.IPv4Address(raw_int)
+    return ip
 
 
 def _is_loopback_or_unspecified_host(host: str) -> bool:
     if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0", "::") or host.endswith(".localhost"):
         return True
-    try:
-        ip = ipaddress.ip_address(host)
-        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-            ip = ip.ipv4_mapped
-        return ip.is_loopback or ip.is_unspecified
-    except ValueError:
-        return False
+    ip = _unwrap_ip(host)
+    return bool(ip and (ip.is_loopback or ip.is_unspecified))
 
 
 def _is_cloud_metadata_or_link_local(host: str) -> bool:
     if host in _CLOUD_METADATA_HOSTS:
         return True
-    try:
-        ip = ipaddress.ip_address(host)
-        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-            ip = ip.ipv4_mapped
-        return ip.is_link_local or str(ip) in _CLOUD_METADATA_HOSTS
-    except ValueError:
-        return False
+    ip = _unwrap_ip(host)
+    return bool(ip and (ip.is_link_local or str(ip) in _CLOUD_METADATA_HOSTS))
 
 
 def validate_navigation_url(
@@ -71,13 +95,14 @@ def validate_navigation_url(
     allow_file: bool = False,
     blocked_ports: frozenset[int] = _INTERNAL_CONTROL_PORTS,
 ) -> str:
-    """Validate target URL before opening or navigating a tab (blocks SSRF, octal/shorthand IPv4 & unsafe schemes)."""
+    """Validate target URL before opening or navigating a tab (blocks WHATWG/RFC3986 SSRF differentials)."""
     cleaned = (url or "").strip()
     if not cleaned:
         raise CDPError("Navigation URL must be non-empty")
     if cleaned == "about:blank":
         return cleaned
 
+    pre_query = cleaned.split("?", 1)[0].split("#", 1)[0]
     parsed = urllib.parse.urlparse(cleaned)
     scheme = (parsed.scheme or "").lower()
     if scheme in _BLOCKED_NAV_SCHEMES:
@@ -89,19 +114,52 @@ def validate_navigation_url(
     if scheme not in ("http", "https"):
         raise CDPError(f"Unsupported navigation URL scheme: {scheme!r}")
 
-    raw_host = (parsed.hostname or "").strip().lower()
-    host = raw_host.rstrip(".")
+    after_scheme = pre_query.split(":", 1)[1] if ":" in pre_query else ""
+    if not after_scheme.startswith("//") or "\\" in after_scheme.lstrip("/").split("/", 1)[0]:
+        raise CDPError(f"Blocked malformed authority or backslash SSRF differential in URL: {cleaned!r}")
+    authority = after_scheme[2:].split("/", 1)[0]
+    if "@" in authority or ("[" in authority and "%" in authority):
+        raise CDPError(f"Blocked userinfo or IPv6 zone-ID in navigation URL: {cleaned!r}")
+
+    raw_host = (parsed.hostname or "").strip()
+    unquoted_host = unicodedata.normalize("NFKC", urllib.parse.unquote(raw_host)).translate(_IDNA_DOTS_MAP).strip().lower()
+    host = unquoted_host.rstrip(".")
+    if host and ":" not in host and not host.isascii():
+        try:
+            host = host.encode("idna").decode("ascii").lower().rstrip(".")
+        except UnicodeError as exc:
+            raise CDPError(f"Invalid IDNA hostname in navigation URL: {raw_host!r}") from exc
+
+    all_numeric_or_hex_labels = (
+        bool(host)
+        and ":" not in host
+        and all(_NUMERIC_OR_HEX_LABEL_RE.match(lbl) is not None for lbl in host.split("."))
+    )
+    has_ambiguous_ip = all_numeric_or_hex_labels and (
+        host.count(".") != 3
+        or any(lbl.startswith("0x") or (len(lbl) > 1 and lbl.startswith("0")) for lbl in host.split("."))
+    )
+    unwrapped_ip = _unwrap_ip(host)
+    is_obfuscated_host = (unwrapped_ip is not None or _is_loopback_or_unspecified_host(host)) and (
+        raw_host.lower().rstrip(".") != host
+        or (":" in host and isinstance(unwrapped_ip, ipaddress.IPv4Address))
+    )
     if (
         not host
+        or any(ch in host for ch in ("/", "\\", "@", " ", "\t", "\r", "\n"))
         or host.isdigit()
-        or host.startswith("0x")
-        or _OCTAL_OR_HEX_SEG_RE.search(host)
+        or has_ambiguous_ip
+        or is_obfuscated_host
         or (_NUMERIC_DOTTED_RE.match(host) and host.count(".") != 3)
     ):
         raise CDPError(f"Blocked ambiguous or numeric-encoded host: {raw_host!r}")
     if _is_cloud_metadata_or_link_local(host):
         raise CDPError(f"Blocked cloud metadata / link-local SSRF host: {host}")
-    eff_port = parsed.port or (443 if scheme == "https" else 80)
+    try:
+        parsed_port = parsed.port
+    except ValueError as exc:
+        raise CDPError(f"Invalid port in navigation URL: {cleaned!r}") from exc
+    eff_port = parsed_port or (443 if scheme == "https" else 80)
     if _is_loopback_or_unspecified_host(host) and eff_port in blocked_ports:
         raise CDPError(f"Blocked navigation to internal control plane port: {eff_port}")
     return cleaned
@@ -176,167 +234,6 @@ class TabLeaseManager:
             return asdict(lease)
 
 
-def _xor_mask(data: bytes, mask_key: bytes) -> bytes:
-    """Fast bulk XOR masking using C-implemented `int.from_bytes` (~50x faster than per-byte loops)."""
-    n = len(data)
-    if n == 0:
-        return b""
-    repeated = (mask_key * ((n // 4) + 1))[:n]
-    return (int.from_bytes(data, "big") ^ int.from_bytes(repeated, "big")).to_bytes(n, "big")
-
-
-class _RFC6455Socket:
-    """Minimal RFC 6455 client WebSocket over loopback TCP (zero external dependencies)."""
-
-    MAX_HANDSHAKE_BYTES = 65536
-    MAX_FRAME_BYTES = 32 * 1024 * 1024
-
-    def __init__(self, ws_url: str, timeout: float = 15.0) -> None:
-        parsed = urllib.parse.urlparse(ws_url)
-        host = parsed.hostname or "127.0.0.1"
-        port = parsed.port or 80
-        path = parsed.path or "/"
-        if parsed.query:
-            path = f"{path}?{parsed.query}"
-
-        try:
-            self._sock = socket.create_connection((host, port), timeout=timeout)
-            key = base64.b64encode(os.urandom(16)).decode("ascii")
-            handshake = (
-                f"GET {path} HTTP/1.1\r\n"
-                f"Host: {host}:{port}\r\n"
-                "Upgrade: websocket\r\n"
-                "Connection: Upgrade\r\n"
-                f"Sec-WebSocket-Key: {key}\r\n"
-                "Sec-WebSocket-Version: 13\r\n"
-                f"Origin: http://{host}:{port}\r\n\r\n"
-            )
-            self._sock.sendall(handshake.encode("ascii"))
-
-            header_buf = bytearray()
-            while b"\r\n\r\n" not in header_buf:
-                if len(header_buf) > self.MAX_HANDSHAKE_BYTES:
-                    self._sock.close()
-                    raise CDPError("CDP WebSocket handshake headers exceeded 64 KiB")
-                chunk = self._sock.recv(4096)
-                if not chunk:
-                    self._sock.close()
-                    raise CDPError("EOF during CDP WebSocket handshake")
-                header_buf.extend(chunk)
-        except (TimeoutError, OSError) as exc:
-            sock = getattr(self, "_sock", None)
-            if sock is not None:
-                try:
-                    sock.close()
-                except OSError:
-                    pass
-            raise CDPError(f"CDP WebSocket connect error: {exc}") from exc
-
-        sep = header_buf.index(b"\r\n\r\n")
-        status_line = header_buf[:sep].splitlines()[0].decode("ascii", errors="replace")
-        if "101" not in status_line:
-            self._sock.close()
-            raise CDPError(f"CDP WebSocket upgrade rejected: {status_line}")
-
-        expected_accept = base64.b64encode(
-            hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("ascii")).digest()
-        ).decode("ascii")
-        if expected_accept.encode("ascii") not in header_buf[:sep]:
-            self._sock.close()
-            raise CDPError("Invalid Sec-WebSocket-Accept in CDP handshake")
-
-        self._rx_buf = bytearray(header_buf[sep + 4 :])
-        self._send_lock = threading.Lock()
-
-    def set_remaining_timeout(self, remaining: float) -> None:
-        self._sock.settimeout(max(0.05, remaining))
-
-    def clear_timeout(self) -> None:
-        self._sock.settimeout(None)
-
-    def _read_exact(self, count: int) -> bytes:
-        try:
-            while len(self._rx_buf) < count:
-                chunk = self._sock.recv(65536)
-                if not chunk:
-                    raise CDPError("CDP WebSocket closed unexpectedly")
-                self._rx_buf.extend(chunk)
-        except (TimeoutError, OSError) as exc:
-            raise CDPError(f"CDP WebSocket read timeout/error: {exc}") from exc
-        out = bytes(self._rx_buf[:count])
-        del self._rx_buf[:count]
-        return out
-
-    def send_text(self, text: str) -> None:
-        payload = text.encode(ENCODING)
-        mask_key = os.urandom(4)
-        length = len(payload)
-        header = bytearray([0x81])
-        if length < 126:
-            header.append(0x80 | length)
-        elif length < 65536:
-            header.append(0x80 | 126)
-            header.extend(struct.pack("!H", length))
-        else:
-            header.append(0x80 | 127)
-            header.extend(struct.pack("!Q", length))
-        header.extend(mask_key)
-        frame_bytes = bytes(header) + _xor_mask(payload, mask_key)
-        try:
-            with self._send_lock:
-                self._sock.sendall(frame_bytes)
-        except (TimeoutError, OSError) as exc:
-            raise CDPError(f"CDP WebSocket write error: {exc}") from exc
-
-    def recv_text(self) -> str:
-        fragments: list[bytes] = []
-        total_bytes = 0
-        while True:
-            b0, b1 = self._read_exact(2)
-            fin = bool(b0 & 0x80)
-            opcode = b0 & 0x0F
-            masked = bool(b1 & 0x80)
-            length = b1 & 0x7F
-            if length == 126:
-                length = struct.unpack("!H", self._read_exact(2))[0]
-            elif length == 127:
-                length = struct.unpack("!Q", self._read_exact(8))[0]
-            if length > self.MAX_FRAME_BYTES or total_bytes + length > self.MAX_FRAME_BYTES:
-                raise CDPError(f"CDP WebSocket frame exceeded {self.MAX_FRAME_BYTES} byte safety cap")
-            mask_key = self._read_exact(4) if masked else b""
-            data = self._read_exact(length)
-            if masked:
-                data = _xor_mask(data, mask_key)
-
-            if opcode == 0x8:
-                raise CDPError("CDP WebSocket closed by browser")
-            if opcode == 0x9:
-                pong_body = data[:125]
-                m = os.urandom(4)
-                pong = bytes([0x8A, 0x80 | len(pong_body)]) + m + _xor_mask(pong_body, m)
-                try:
-                    with self._send_lock:
-                        self._sock.sendall(pong)
-                except (TimeoutError, OSError) as exc:
-                    raise CDPError(f"CDP Pong write error: {exc}") from exc
-                continue
-            if opcode in (0x0, 0x1, 0x2):
-                total_bytes += len(data)
-                fragments.append(data)
-                if fin:
-                    return b"".join(fragments).decode(ENCODING, errors="replace")
-
-    def close(self) -> None:
-        try:
-            self._sock.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
-        try:
-            self._sock.close()
-        except OSError:
-            pass
-
-
 class CDPBridge:
     """High-level co-browsing controller talking to Chromium's loopback DevTools port.
 
@@ -356,11 +253,117 @@ class CDPBridge:
         self._dialog_lock = threading.Lock()
         self._dialog_history: dict[str, list[dict[str, Any]]] = {}
         self._dialog_policies: dict[str, dict[str, Any]] = {}
+        self._fetch_lock = threading.Lock()
+        self._fetch_policies: dict[str, dict[str, str]] = {}
+        self._fetch_hooks: list[tuple[int, str, Callable[[dict[str, Any]], str | None]]] = []
         self._mux = MultiplexedCDPPool(
             ws_url_provider=self._resolve_browser_ws_url,
             socket_factory=lambda ws_url, timeout: _RFC6455Socket(ws_url, timeout=timeout),
         )
         self._mux.subscribe("Page.javascriptDialogOpening", self._on_mux_dialog_event)
+        self._mux.subscribe("Target.detachedFromTarget", self._on_mux_target_detached)
+        self._mux.subscribe("Fetch.requestPaused", self._on_mux_fetch_paused)
+
+    def _on_mux_target_detached(self, event: dict[str, Any]) -> None:
+        tid = str(event.get("target_id") or "")
+        if not tid:
+            return
+        self.leases.release(tid)
+        with self._target_locks_guard:
+            self._target_locks.pop(tid, None)
+        with self._dialog_lock:
+            self._dialog_history.pop(tid, None)
+            self._dialog_policies.pop(tid, None)
+        with self._fetch_lock:
+            self._fetch_policies.pop(tid, None)
+
+    def register_fetch_hook(
+        self,
+        priority: int,
+        owner: str,
+        hook: Callable[[dict[str, Any]], str | None],
+    ) -> Callable[[], None]:
+        """Register an ordered `Fetch.requestPaused` hook returning `'FAIL'`, `'PAUSE'`, or `None`."""
+        entry = (int(priority), str(owner), hook)
+        with self._fetch_lock:
+            self._fetch_hooks = [h for h in self._fetch_hooks if h[1] != owner]
+            self._fetch_hooks.append(entry)
+            self._fetch_hooks.sort(key=lambda h: h[0])
+
+        def _unsub() -> None:
+            with self._fetch_lock:
+                self._fetch_hooks = [h for h in self._fetch_hooks if h[1] != owner]
+
+        return _unsub
+
+    def set_fetch_interception(
+        self,
+        target_id: str,
+        owner: str,
+        *,
+        enabled: bool,
+        url_pattern: str = "*",
+    ) -> None:
+        """Ref-counted per-tab `Fetch.enable`/`Fetch.disable` preventing guards from disarming each other."""
+        with self._fetch_lock:
+            owners = self._fetch_policies.setdefault(target_id, {})
+            if enabled:
+                owners[owner] = url_pattern or "*"
+            else:
+                owners.pop(owner, None)
+            patterns = ["*"] if ("*" in owners.values()) else sorted(set(owners.values()))
+            if not owners:
+                self._fetch_policies.pop(target_id, None)
+
+        if patterns:
+            self.run_session(
+                target_id,
+                [("Fetch.enable", {"patterns": [{"urlPattern": p, "requestStage": "Request"} for p in patterns]})],
+            )
+        else:
+            try:
+                self.run_session(target_id, [("Fetch.disable", {})])
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _on_mux_fetch_paused(self, event: dict[str, Any]) -> None:
+        params = event.get("params") or {}
+        session_id = str(event.get("session_id") or "")
+        request_id = str(params.get("requestId") or "")
+        if not session_id or not request_id:
+            return
+        if ("responseStatusCode" in params) or ("responseErrorReason" in params):
+            try:
+                self._mux.send_command_async("Fetch.continueRequest", {"requestId": request_id}, session_id=session_id)
+            except Exception:  # noqa: BLE001
+                pass
+            return
+
+        with self._fetch_lock:
+            hooks = list(self._fetch_hooks)
+
+        for _prio, _owner, hook in hooks:
+            try:
+                verdict = hook(event)
+            except Exception:  # noqa: BLE001
+                verdict = None
+            if verdict == "FAIL":
+                try:
+                    self._mux.send_command_async(
+                        "Fetch.failRequest",
+                        {"requestId": request_id, "errorReason": "BlockedByClient"},
+                        session_id=session_id,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                return
+            if verdict == "PAUSE":
+                return
+
+        try:
+            self._mux.send_command_async("Fetch.continueRequest", {"requestId": request_id}, session_id=session_id)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _resolve_browser_ws_url(self) -> str:
         ver = self.version_info()
@@ -502,9 +505,12 @@ class CDPBridge:
                         timeout=10.0,
                     )
                     new_id = res["targetId"]
-                    for tab in self.list_tabs(include_extensions=True):
-                        if tab["target_id"] == new_id:
-                            return tab
+                    try:
+                        for tab in self.list_tabs(include_extensions=True):
+                            if tab["target_id"] == new_id:
+                                return tab
+                    except Exception:  # noqa: BLE001
+                        pass
                     return {"target_id": new_id, "url": checked_url, "title": "", "ws_url": ""}
                 except CDPMuxError:
                     pass
@@ -518,9 +524,12 @@ class CDPBridge:
                         {"url": checked_url, "background": True},
                     )
                     new_id = res["targetId"]
-                    for tab in self.list_tabs(include_extensions=True):
-                        if tab["target_id"] == new_id:
-                            return tab
+                    try:
+                        for tab in self.list_tabs(include_extensions=True):
+                            if tab["target_id"] == new_id:
+                                return tab
+                    except Exception:  # noqa: BLE001
+                        pass
                     return {"target_id": new_id, "url": checked_url, "title": "", "ws_url": ""}
 
         encoded = urllib.parse.quote(checked_url, safe=":/?&=%+~.-_")
@@ -541,6 +550,8 @@ class CDPBridge:
         with self._dialog_lock:
             self._dialog_history.pop(target_id, None)
             self._dialog_policies.pop(target_id, None)
+        with self._fetch_lock:
+            self._fetch_policies.pop(target_id, None)
         safe_tid = urllib.parse.quote(target_id, safe="")
         try:
             with urllib.request.urlopen(f"{self.base_http}/json/close/{safe_tid}", timeout=3.0) as resp:
@@ -549,33 +560,25 @@ class CDPBridge:
             return False
 
     def _pick_target_id(self, target_id: str | None) -> str:
-        if target_id:
-            return target_id
+        clean_tid = (target_id or "").strip()
+        if clean_tid:
+            return clean_tid
         tabs = self.list_tabs(include_extensions=True)
         if not tabs:
             created = self.open_tab("about:blank", background=False)
             return created["target_id"]
-        external = [
+        external = [t for t in tabs if not is_internal_browser_url(t["url"], cdp_port=self.port)]
+        normal = [
             t
             for t in tabs
-            if not t["url"].startswith(
-                (
-                    "chrome-extension://",
-                    "chrome://",
-                    "devtools://",
-                    "http://127.0.0.1:8795",
-                    "http://127.0.0.1:8796",
-                    "http://localhost:8795",
-                    "http://localhost:8796",
-                )
-            )
-            and t["url"] not in ("", "about:blank")
-            and "luminara_pages/" not in t["url"]
+            if not t["url"].lower().startswith(("chrome-extension://", "devtools://", "chrome://", "luminara://"))
         ]
-        real_pages = [t for t in tabs if not t["url"].startswith("chrome-extension://") and t["url"] != "about:blank"]
-        normal = [t for t in tabs if not t["url"].startswith("chrome-extension://")]
-        chosen = external[0] if external else (real_pages[0] if real_pages else (normal[0] if normal else tabs[0]))
-        return chosen["target_id"]
+        if external:
+            return external[0]["target_id"]
+        if normal:
+            return normal[0]["target_id"]
+        created = self.open_tab("about:blank", background=False)
+        return created["target_id"]
 
     def _resolve_ws_url(self, target_id: str | None) -> tuple[str, str]:
         tid = self._pick_target_id(target_id)
@@ -768,30 +771,48 @@ class CDPBridge:
                 )
                 payload = res[-1]
             else:
-                _tid, w_res = self.run_session(
-                    tid,
-                    [
-                        ("Page.enable", {}),
-                        (
-                            "Page.createIsolatedWorld",
-                            {
-                                "frameId": frame_id,
-                                "worldName": "luminara_frame_bridge",
-                                "grantUniveralAccess": True,
-                            },
-                        ),
-                    ],
+                world_cmd = (
+                    "Page.createIsolatedWorld",
+                    {"frameId": frame_id, "worldName": "luminara_frame_bridge", "grantUniveralAccess": True},
                 )
-                world_res = w_res[-1] if w_res else {}
-                eval_params: dict[str, Any] = {
-                    "expression": expression,
-                    "returnByValue": True,
-                    "awaitPromise": await_promise,
-                }
-                if world_res.get("executionContextId") is not None:
-                    eval_params["contextId"] = world_res["executionContextId"]
-                _tid2, e_res = self.run_session(tid, [("Runtime.evaluate", eval_params)])
-                payload = e_res[-1]
+                if self.use_mux:
+                    try:
+                        w_res = self._mux.run_target_commands(tid, [("Page.enable", {}), world_cmd])
+                        ctx_id = (w_res[-1] if w_res else {}).get("executionContextId")
+                        if ctx_id is None:
+                            raise CDPError(f"Frame {frame_id!r} isolated world unavailable")
+                        e_res = self._mux.run_target_commands(
+                            tid,
+                            [("Runtime.evaluate", {"expression": expression, "returnByValue": True, "awaitPromise": await_promise, "contextId": ctx_id})],
+                        )
+                        payload = e_res[-1]
+                    except CDPMuxError:
+                        payload = None
+                else:
+                    payload = None
+                if payload is None:
+                    with self._lock_for_target(tid):
+                        resolved_tid, ws_url = self._resolve_ws_url(tid)
+                        deadline = time.monotonic() + 20.0
+                        sock = _RFC6455Socket(ws_url, timeout=20.0)
+                        auto_seq = [1_000_000]
+                        try:
+                            self._send_and_await(sock, 1, "Page.enable", {}, deadline, resolved_tid, auto_seq)
+                            w_out = self._send_and_await(sock, 2, world_cmd[0], world_cmd[1], deadline, resolved_tid, auto_seq)
+                            ctx_id = w_out.get("executionContextId")
+                            if ctx_id is None:
+                                raise CDPError(f"Frame {frame_id!r} isolated world unavailable")
+                            payload = self._send_and_await(
+                                sock,
+                                3,
+                                "Runtime.evaluate",
+                                {"expression": expression, "returnByValue": True, "awaitPromise": await_promise, "contextId": ctx_id},
+                                deadline,
+                                resolved_tid,
+                                auto_seq,
+                            )
+                        finally:
+                            sock.close()
         else:
             _tid, res = self.run_session(
                 tid,

@@ -145,7 +145,7 @@ class TestLuminaraAgenticObligations(unittest.TestCase):
 
         prof = ForkProfile()
         report = run_rea_verification_suite(CORE_REPO, WIN_REPO, FORGE_ROOT, prof, write_report=False)
-        self.assertEqual(report["total_count"], 14)
+        self.assertEqual(report["total_count"], 21)
         if find_chromium_binary(FORGE_ROOT, prof) is not None:
             self.assertTrue(
                 report["all_obligations_passed"],

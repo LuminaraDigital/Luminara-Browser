@@ -13,6 +13,7 @@ import csv
 from html.parser import HTMLParser
 import io
 import json
+import math
 import re
 import time
 from typing import Any
@@ -137,20 +138,26 @@ DOM_SNAPSHOT_JS_TEMPLATE = r"""
   const elements = [];
   let idx = 1;
 
+  function isVisibleTree(win, el) {
+    let cur = el;
+    while (cur) {
+      if (cur.nodeType === 1) {
+        if (cur.hidden || cur.getAttribute('aria-hidden') === 'true') return false;
+        const st = win.getComputedStyle(cur);
+        if (st.visibility === 'hidden' || st.display === 'none' || parseFloat(st.opacity || '1') <= 0 || parseFloat(st.fontSize || '12') === 0) return false;
+      }
+      cur = cur.parentElement || (cur.getRootNode && cur.getRootNode().host) || null;
+    }
+    return true;
+  }
+
   for (const ctx of candidateContexts) {
     const candidates = Array.from(ctx.doc.querySelectorAll(interactiveSel));
     for (const el of candidates) {
       if (idx > 80) break;
-      if (el.closest('[aria-hidden="true"], [hidden]')) continue;
       const rect = el.getBoundingClientRect();
       if (rect.width < 4 || rect.height < 4) continue;
-      const style = ctx.win.getComputedStyle(el);
-      if (
-        style.visibility === 'hidden' ||
-        style.display === 'none' ||
-        parseFloat(style.opacity || '1') === 0 ||
-        parseFloat(style.fontSize || '12') === 0
-      ) continue;
+      if (!isVisibleTree(ctx.win, el)) continue;
       const absLeft = rect.left + ctx.offsetX;
       const absTop = rect.top + ctx.offsetY;
       const absRight = rect.right + ctx.offsetX;
@@ -192,7 +199,13 @@ DOM_SNAPSHOT_JS_TEMPLATE = r"""
 
   // Detect standard authentication / human verification gates before HUD injection (never bypass — report for HITL handoff!)
   const bodyLower = (document.body ? document.body.innerText : '').slice(0, 4000).toLowerCase();
-  const hasPasswordInput = Boolean(document.querySelector('input[type="password"]'));
+  const hasPasswordInput = Array.from(document.querySelectorAll('input[type="password"]')).some(el => {
+    if (el.disabled) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return false;
+    const s = window.getComputedStyle(el);
+    return s.display !== 'none' && s.visibility !== 'hidden' && parseFloat(s.opacity || '1') > 0;
+  });
   const hasChallengeFrame = Boolean(
     document.querySelector('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="turnstile"], #cf-challenge-running, [data-sitekey]')
   );
@@ -344,8 +357,10 @@ def build_dom_action_js(action: str, index: int | None = None, selector: str | N
         offsetX = frRect.left;
         offsetY = frRect.top;
       }}
-    }} else {{
+    }} else if (rawSel.trim()) {{
       el = document.querySelector(rawSel);
+    }} else {{
+      return {{ ok: false, error: 'Action requires index or selector' }};
     }}
   }} catch (err) {{
     return {{ ok: false, error: 'Invalid CSS selector: ' + String(err) }};
@@ -369,12 +384,29 @@ def build_dom_action_js(action: str, index: int | None = None, selector: str | N
   if (act === 'type' || act === 'select') {{
     el.focus();
     const val = {json.dumps(text)};
-    const proto = el.tagName === 'SELECT'
-      ? ownerWin.HTMLSelectElement.prototype
-      : (el.tagName === 'TEXTAREA' ? ownerWin.HTMLTextAreaElement.prototype : ownerWin.HTMLInputElement.prototype);
-    const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-    if (desc && desc.set) desc.set.call(el, val);
-    else el.value = val;
+    if (el.tagName === 'SELECT') {{
+      const opts = Array.from(el.options || []);
+      const trimmed = String(val).trim();
+      const lower = trimmed.toLowerCase();
+      const matchedOpt = opts.find(o => o.value === val)
+        || opts.find(o => o.value.toLowerCase() === lower)
+        || opts.find(o => (o.text || '').trim().toLowerCase() === lower || (o.label || '').trim().toLowerCase() === lower);
+      if (!matchedOpt) {{
+        return {{ ok: false, error: 'Select option not found: ' + val }};
+      }}
+      const desc = Object.getOwnPropertyDescriptor(ownerWin.HTMLSelectElement.prototype, 'value');
+      if (desc && desc.set) desc.set.call(el, matchedOpt.value);
+      else el.value = matchedOpt.value;
+    }} else if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {{
+      const proto = el.tagName === 'TEXTAREA' ? ownerWin.HTMLTextAreaElement.prototype : ownerWin.HTMLInputElement.prototype;
+      const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (desc && desc.set) desc.set.call(el, val);
+      else el.value = val;
+    }} else if (el.isContentEditable) {{
+      el.textContent = val;
+    }} else {{
+      return {{ ok: false, error: 'Element is not an editable input, select, textarea, or contenteditable: ' + el.tagName }};
+    }}
     el.dispatchEvent(new ownerWin.Event('input', {{ bubbles: true }}));
     el.dispatchEvent(new ownerWin.Event('change', {{ bubbles: true }}));
     return {{ ok: true, action: act, length: val.length }};
@@ -447,6 +479,17 @@ class _StructuredDOMParser(HTMLParser):
                 self._skip_stack.append(t)
             return
 
+        if t == "br":
+            if self._active_block:
+                self._buf.append(" ")
+            if self._link_href is not None:
+                self._link_buf.append(" ")
+            if self._in_cell:
+                self._cell_buf.append(" ")
+            if self._in_li:
+                self._li_buf.append(" ")
+            return
+
         if t == "meta" and attr_map.get("name", "").lower() == "description":
             self.description = attr_map.get("content", "").strip()
         elif t in self.BLOCK_TEXT_TAGS:
@@ -460,7 +503,7 @@ class _StructuredDOMParser(HTMLParser):
             self._cur_table = []
         elif t == "tr" and self._in_table:
             self._cur_row = []
-        elif t in ("td", "th") and self._in_table:
+        elif t in ("td", "th") and self._in_table and len(self._cur_row) < 40:
             self._in_cell = True
             self._cell_buf = []
         elif t in ("ul", "ol") and len(self.lists) < 10 and self._cur_list is None:
@@ -516,6 +559,10 @@ class _StructuredDOMParser(HTMLParser):
         elif t == "tr" and self._in_table:
             if any(self._cur_row) and len(self._cur_table) < 60:
                 self._cur_table.append(self._cur_row)
+            if len(self._cur_table) >= 60:
+                self.tables.append(self._cur_table)
+                self._cur_table = []
+                self._in_table = False
         elif t == "table" and self._in_table:
             if self._cur_table:
                 self.tables.append(self._cur_table)
@@ -539,10 +586,17 @@ def extract_structured_page(html_source: str, source_url: str = "") -> dict[str,
     rows: list[dict[str, Any]] = []
     for tbl in parser.tables:
         if len(tbl) >= 2 and len(tbl[0]) >= 2:
-            headers = [h or f"col_{i + 1}" for i, h in enumerate(tbl[0])]
+            headers: list[str] = []
+            seen_hdrs: dict[str, int] = {}
+            for i, raw_h in enumerate(tbl[0]):
+                base_h = raw_h or f"col_{i + 1}"
+                cnt = seen_hdrs.get(base_h, 0)
+                seen_hdrs[base_h] = cnt + 1
+                headers.append(base_h if cnt == 0 else f"{base_h}_{cnt + 1}")
             for r in tbl[1:]:
-                if len(r) == len(headers):
-                    row_dict = {headers[i]: r[i] for i in range(len(headers))}
+                if r and any(c for c in r):
+                    padded = (r + [""] * len(headers))[: len(headers)]
+                    row_dict = {headers[i]: padded[i] for i in range(len(headers))}
                     row_dict["_source_url"] = source_url
                     rows.append(row_dict)
 
@@ -593,8 +647,11 @@ def classify_attribute_widget(name: str, value: Any) -> tuple[str, float | None,
     bonus = 20 if any(t in lname for t in _KEY_METRIC_TERMS) else 0
 
     if isinstance(value, (int, float)) and not isinstance(value, bool):
+        fval = float(value)
+        if not math.isfinite(fval):
+            return ("short_text", None, 20)
         widget = "currency" if ("price" in lname or "cost" in lname) else "number"
-        return (widget, float(value), 75 + bonus)
+        return (widget, fval, 75 + bonus)
 
     m_cur = _CURRENCY_RE.match(sval)
     if m_cur:

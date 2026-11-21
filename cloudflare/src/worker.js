@@ -1,5 +1,5 @@
 /**
- * Luminara Browser v3.0.0 — Cloudflare Edge Worker & Agent Discovery Router
+ * Luminara Browser v3.1.0 — Cloudflare Edge Worker & Agent Discovery Router
  * Serves /api/health, /api/mcp-spec, /.well-known/agent.json, /llms.txt, /llms-full.txt, /robots.txt,
  * and static Precision Dark portal assets with strict security headers.
  */
@@ -27,6 +27,14 @@ const MCP_TOOLS = [
   "browser_mutation_guard",
   "browser_workspace",
   "browser_hibernate_tabs",
+  "browser_outline",
+  "browser_wait",
+  "browser_screenshot",
+  "browser_schedule",
+  "browser_sequence_guard",
+  "browser_vrt_isolation",
+  "browser_monitors",
+  "browser_search_eval",
 ];
 
 const MCP_RESOURCES = [
@@ -37,9 +45,11 @@ const MCP_RESOURCES = [
   "luminara://playbooks/list",
   "luminara://workspaces/list",
   "luminara://mutations/status",
+  "luminara://security/sequences",
+  "luminara://monitors/runs",
 ];
 
-function withSecurityHeaders(res, extra = {}, isHead = false) {
+function withSecurityHeaders(res, extra = {}) {
   const headers = new Headers(res.headers);
   headers.set(
     "Content-Security-Policy",
@@ -56,14 +66,14 @@ function withSecurityHeaders(res, extra = {}, isHead = false) {
   for (const [k, v] of Object.entries(extra)) {
     headers.set(k, v);
   }
-  return new Response(isHead ? null : res.body, {
+  return new Response(res.body, {
     status: res.status,
     statusText: res.statusText,
     headers,
   });
 }
 
-function jsonResponse(payload, status = 200, extraHeaders = {}, isHead = false) {
+function jsonResponse(payload, status = 200, extraHeaders = {}) {
   const raw = JSON.stringify(payload, null, 2);
   return withSecurityHeaders(
     new Response(raw, {
@@ -73,12 +83,11 @@ function jsonResponse(payload, status = 200, extraHeaders = {}, isHead = false) 
         "Content-Length": String(new TextEncoder().encode(raw).byteLength),
       },
     }),
-    extraHeaders,
-    isHead
+    extraHeaders
   );
 }
 
-function textResponse(body, contentType = "text/plain; charset=utf-8", status = 200, extraHeaders = {}, isHead = false) {
+function textResponse(body, contentType = "text/plain; charset=utf-8", status = 200, extraHeaders = {}) {
   return withSecurityHeaders(
     new Response(body, {
       status,
@@ -87,8 +96,7 @@ function textResponse(body, contentType = "text/plain; charset=utf-8", status = 
         "Content-Length": String(new TextEncoder().encode(body).byteLength),
       },
     }),
-    extraHeaders,
-    isHead
+    extraHeaders
   );
 }
 
@@ -104,7 +112,7 @@ export default {
   async _route(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
-    const version = env.APP_VERSION || "3.0.0";
+    const version = env.APP_VERSION || "3.1.0";
     const chromiumBase = env.CHROMIUM_BASE || "157.0.8103.78-1.1";
     const repo = env.GITHUB_REPO || "https://github.com/LuminaraDigital/Luminara-Browser";
     const localMcp = env.LOCAL_MCP_ENDPOINT || "http://127.0.0.1:8796/api/agent/mcp";
@@ -122,16 +130,28 @@ export default {
       return jsonResponse({ error: "method_not_allowed" }, 405, { Allow: "GET, HEAD, OPTIONS" });
     }
 
-    if (path === "/api/health") {
-      return jsonResponse({
-        status: "ok",
-        service: "luminara-browser-edge",
-        version,
-        chromium_base: chromiumBase,
-        mcp_tool_count: MCP_TOOLS.length,
-        colo: request.cf?.colo || "local",
-        ts: new Date().toISOString(),
+    if (path === "/favicon.ico" || path === "/favicon.svg") {
+      const svgIcon =
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#11161f"/><circle cx="16" cy="16" r="7" fill="#10b981"/></svg>';
+      return textResponse(svgIcon, "image/svg+xml; charset=utf-8", 200, {
+        "Cache-Control": "public, max-age=86400",
       });
+    }
+
+    if (path === "/api/health") {
+      return jsonResponse(
+        {
+          status: "ok",
+          service: "luminara-browser-edge",
+          version,
+          chromium_base: chromiumBase,
+          mcp_tool_count: MCP_TOOLS.length,
+          colo: request.cf?.colo || "local",
+          ts: new Date().toISOString(),
+        },
+        200,
+        { "Access-Control-Allow-Origin": "*" }
+      );
     }
 
     if (path === "/api/mcp-spec") {
@@ -179,16 +199,16 @@ export default {
     if (path === "/llms.txt" || path === "/llms-full.txt") {
       const baseDoc = [
         `# Luminara Browser v${version}`,
-        `> Privacy-hardened Ungoogled-Chromium ${chromiumBase} desktop browser built for simultaneous Human + AI Agent co-browsing via Multiplexed Loopback CDP (:9229) and 20-Tool MCP v2 (:8796).`,
+        `> Privacy-hardened Ungoogled-Chromium ${chromiumBase} desktop browser built for simultaneous Human + AI Agent co-browsing via Multiplexed Loopback CDP (:9229) and ${MCP_TOOLS.length}-Tool MCP v2 (:8796).`,
         "",
         "## Core Capabilities",
         "- Zero Google Telemetry & Privacy Shield v3: `.void0` domain trap + `trk:` protocol sink + eTLD+1 deterministic farbling.",
         "- Simultaneous Co-Browsing: Humans and MCP v2 AI agents share live tabs via `TabLeaseManager` + `MultiplexedCDPPool` (`<1.5ms` RTT) with 1-click Human Takeover.",
-        "- Hybrid Perception & Iframe/Dialog Supervision: Blink `AXTree` + Shadow-DOM + OOPIF traversal + Set-of-Marks `[1..N]` indexing + non-blocking JS Dialog Supervisor.",
+        "- Hybrid Perception & Iframe/Dialog Supervision: Blink `AXTree` + Shadow-DOM + OOPIF traversal + Set-of-Marks `[1..N]` indexing + stable `[ref=eN]` outline + non-blocking JS Dialog Supervisor.",
         "- Origin-Pinned DPAPI/AEAD Model-Blind Vault: Injects credentials & RFC 6238 TOTP codes over loopback CDP after synchronous origin verification without exposing secrets to prompts or logs.",
-        "- Zero-Context AST Pipeline Sandbox & Self-Improving Playbooks: Multi-step Python/declarative pipelines in 1 turn + zero-LLM replay of verified domain playbooks.",
-        "- W3C WebMCP & Network Mutation Firewall: Structured `navigator.modelContext` tools + `Fetch.enable` savepoint approval for `POST`/`PUT`/`PATCH`/`DELETE`.",
-        "- Parallel BulkEngine, SQLite FTS5 Knowledge Workspaces & Generative UI Studio: `4.5x+` parallel throughput, tab hibernation, and 50-slot Undo/Redo.",
+        "- Zero-Context AST Pipeline Sandbox & Self-Improving CAS Playbooks: Multi-step Python/declarative pipelines in 1 turn + zero-LLM replay + `expected_revision` rollback.",
+        "- W3C WebMCP, Numbat Sequence Guard & Hermetic VRT: Structured `navigator.modelContext` tools + `Fetch.enable` savepoint approval + multi-step exfil chain blocking (`CASE-*.zip`) + declared-origin PNG visual regression.",
+        "- Fenced Web Monitors, Multi-Provider Search Eval & SQLite FTS5 Workspaces: `lease_epoch` monitors, exact `Decimal` CostLedger, `4.5x+` parallel throughput, tab hibernation, and 50-slot Undo/Redo.",
         "- Cryptographic Accountability & Binary-Safe Redaction: Hash-chained + HMAC-signed `LUM-*` receipts (`/api/agent/ledger/verify`) scrubbed via `LuminaraRedactor`.",
         "",
         "## Quickstart & Endpoints",
@@ -210,9 +230,10 @@ export default {
           "## CLI Commands",
           "- `luminara-forge build-portable`",
           "- `luminara-forge agent-daemon --port 8796 --cdp-port 9229`",
+          "- `luminara-forge verify-arch` (SPACE + Codescythe Architecture Ratchet)",
           "- `luminara-forge verify-upstream-patches` (Zero-fuzz C++ patch gate)",
-          "- `luminara-forge verify-rea` (14/14 REA Reconstruction Gate)",
-          "- `luminara-forge benchmark` (AB-01..AB-04 Live A/B Suite)",
+          "- `luminara-forge verify-rea` (21/21 REA Reconstruction Gate)",
+          "- `luminara-forge benchmark` (AB-01..AB-08 Live A/B Suite)",
           "- `luminara-forge benchmark-100x` (BM-01..BM-06 100x Engine Suite)"
         );
       }

@@ -23,13 +23,12 @@ import zipfile
 
 from .cdp_client import CDPBridge, terminate_browser_process, wait_for_cdp_page_ready
 from .downloads import extract_archive
-from .http_base import ensure_local_ui_key
+from .http_base import atomic_write_private, ensure_local_ui_key
+from .luminara_copilot_ext import build_palette_js, make_solid_emerald_png, write_copilot_extension
 from .luminara_ui import (
     build_luminara_newtab_html,
     build_luminara_workspace_html,
-    write_copilot_extension,
 )
-from .luminara_workspace_ui import make_solid_emerald_png
 from .models import ForkProfile
 from .shield_compiler import build_deterministic_farbling_js, compile_dnr_shield_rules
 from .webmcp import WEBMCP_BOOTSTRAP_JS
@@ -123,7 +122,7 @@ def _write_shield_extension(ext_dir: Path, profile: ForkProfile) -> None:
     manifest: dict[str, object] = {
         "manifest_version": 3,
         "name": f"{profile.brand_name} Privacy Shield v3",
-        "version": "3.0.0",
+        "version": "3.1.0",
         "description": f"Tracker/query-param DNR firewall (.{profile.trap_tld}), eTLD+1 deterministic farbling & W3C WebMCP.",
         "permissions": ["declarativeNetRequest", "declarativeNetRequestWithHostAccess"],
         "host_permissions": ["<all_urls>"],
@@ -134,7 +133,7 @@ def _write_shield_extension(ext_dir: Path, profile: ForkProfile) -> None:
         "declarative_net_request": {
             "rule_resources": [{"id": "forge_trap_rules", "enabled": True, "path": "rules.json"}]
         },
-        "content_scripts": content_scripts,
+        **({"content_scripts": content_scripts} if content_scripts else {}),
         "action": {
             "default_title": f"{profile.brand_name} Shield v3",
             "default_popup": "popup.html",
@@ -166,7 +165,11 @@ body {{ width: 280px; margin: 0; padding: 14px; background: var(--bg); color: va
     (ext_dir / "popup.html").write_text(popup, encoding=ENCODING, newline="\n")
 
 
-def _extract_inline_script_for_mv3(html_doc: str, js_filename: str) -> tuple[str, str]:
+def _extract_inline_script_for_mv3(
+    html_doc: str,
+    js_filename: str,
+    extra_scripts: tuple[str, ...] = (),
+) -> tuple[str, str]:
     """Split inline `<script>...</script>` out of HTML into an external `.js` file for MV3 CSP `script-src 'self'`."""
     scripts: list[str] = []
 
@@ -177,12 +180,13 @@ def _extract_inline_script_for_mv3(html_doc: str, js_filename: str) -> tuple[str
         return ""
 
     stripped = re.sub(r"<script\b[^>]*>([\s\S]*?)</script>", _repl, html_doc, flags=re.IGNORECASE)
-    if scripts:
-        tag = f'<script src="{js_filename}" defer></script>\n</body>'
+    script_tags = [*(f'<script src="{js_filename}" defer></script>' for _ in (1,) if scripts), *(f'<script src="{s}" defer></script>' for s in extra_scripts)]
+    if script_tags:
+        joined_tags = "\n".join(script_tags)
         if "</body>" in stripped:
-            stripped = stripped.replace("</body>", tag, 1)
+            stripped = stripped.replace("</body>", f"{joined_tags}\n</body>", 1)
         else:
-            stripped = stripped + "\n" + f'<script src="{js_filename}" defer></script>\n'
+            stripped = stripped + "\n" + joined_tags + "\n"
     return stripped, "\n\n".join(scripts) + ("\n" if scripts else "")
 
 
@@ -207,76 +211,21 @@ def _write_offline_newtab_extension(
     (ext_dir / "workspace.js").write_text(ws_js, encoding=ENCODING, newline="\n")
 
     newtab_bg_js = """chrome.runtime.onMessage.addListener((msg) => {
-  if (msg && (msg.luminaraOpenPage === 'workspace.html' || msg.luminaraOpenPage === 'newtab.html')) {
-    chrome.tabs.create({ url: chrome.runtime.getURL(msg.luminaraOpenPage) });
+  if (msg && typeof msg.luminaraOpenPage === 'string') {
+    const allowed = ['workspace.html', 'workspace.html#view=telemetry', 'newtab.html'];
+    if (allowed.includes(msg.luminaraOpenPage)) {
+      chrome.tabs.create({ url: chrome.runtime.getURL(msg.luminaraOpenPage) });
+    }
   }
 });
 """
     (ext_dir / "newtab_bg.js").write_text(newtab_bg_js, encoding=ENCODING, newline="\n")
-
-    search_tpl_json = json.dumps(profile.resolved_search_engine().search_url)
-    palette_js = f"""
-(() => {{
-  if (window.__luminaraCmdPalette) return;
-  window.__luminaraCmdPalette = true;
-  const SEARCH_TPL = {search_tpl_json};
-  let overlay = null;
-  function close() {{ if (overlay) {{ overlay.remove(); overlay = null; }} }}
-  function openInternalPage(file, fallbackPath) {{
-    try {{
-      if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {{
-        chrome.runtime.sendMessage({{ luminaraOpenPage: file }});
-        return;
-      }}
-    }} catch (_e) {{}}
-    window.open('http://127.0.0.1:{profile.agent_port}' + fallbackPath, '_blank');
-  }}
-  function open() {{
-    if (overlay) {{ close(); return; }}
-    overlay = document.createElement('div');
-    overlay.id = '__luminara_cmd_palette';
-    overlay.setAttribute('role', 'dialog');
-    overlay.setAttribute('aria-modal', 'true');
-    overlay.setAttribute('aria-label', 'Luminara Command Palette');
-    overlay.style.cssText = 'color-scheme:dark light;position:fixed;inset:0;z-index:2147483647;background:oklch(0.08 0.01 255 / 0.58);backdrop-filter:blur(8px);display:grid;place-items:start center;padding-top:14vh;font-family:Inter,-apple-system,Segoe UI,sans-serif;';
-    const box = document.createElement('div');
-    box.style.cssText = 'width:min(560px,92vw);background:light-dark(oklch(0.95 0.007 255),oklch(0.15 0.013 255));color:light-dark(oklch(0.15 0.015 255),oklch(0.965 0.005 255));border:1px solid light-dark(oklch(0.48 0.15 162 / 0.45),oklch(0.75 0.16 162 / 0.45));border-radius:16px;padding:12px;box-shadow:0 24px 60px oklch(0 0 0 / 0.45);';
-    const inp = document.createElement('input');
-    inp.setAttribute('aria-label', 'Command or URL');
-    inp.placeholder = 'Luminara Command Palette — URL, search, or /workspace, /newtab (Esc to close)';
-    inp.style.cssText = 'width:100%;box-sizing:border-box;background:light-dark(oklch(0.915 0.009 255),oklch(0.115 0.012 255));color:inherit;border:1px solid light-dark(oklch(0.15 0.01 255 / 0.16),oklch(1 0 0 / 0.14));border-radius:10px;padding:10px 12px;font-size:14px;outline:2px solid light-dark(oklch(0.47 0.14 162),oklch(0.75 0.16 162));outline-offset:2px;';
-    inp.addEventListener('keydown', (e) => {{
-      if (e.key === 'Escape') {{ close(); return; }}
-      if (e.key === 'Enter') {{
-        const q = inp.value.trim();
-        close();
-        if (!q) return;
-        if (q === '/workspace') openInternalPage('workspace.html', '/workspace');
-        else if (q === '/newtab') openInternalPage('newtab.html', '/newtab');
-        else if (/^https?:\\/\\//i.test(q)) location.href = q;
-        else if (!/\\s/.test(q) && /^[a-z0-9-]+(\\.[a-z0-9-]+)+(\\/.*)?$/i.test(q)) location.href = 'https://' + q;
-        else location.href = SEARCH_TPL.replace('{{searchTerms}}', encodeURIComponent(q));
-      }}
-    }});
-    box.appendChild(inp);
-    overlay.appendChild(box);
-    overlay.addEventListener('click', (e) => {{ if (e.target === overlay) close(); }});
-    document.documentElement.appendChild(overlay);
-    inp.focus();
-  }}
-  window.addEventListener('keydown', (e) => {{
-    if ((e.altKey && e.key.toLowerCase() === 'k') || ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'k')) {{
-      e.preventDefault();
-      open();
-    }}
-  }}, true);
-}})();
-"""
+    palette_js = build_palette_js(profile.resolved_search_engine().search_url, agent_port=profile.agent_port) + "\n"
     (ext_dir / "palette.js").write_text(palette_js, encoding=ENCODING, newline="\n")
     manifest = {
         "manifest_version": 3,
         "name": f"{profile.brand_name} Command Deck & Palette",
-        "version": "3.0.0",
+        "version": "3.1.0",
         "description": "Zero-cold-start offline-first New Tab Command Deck + Alt+K / Ctrl+Shift+K Command Palette.",
         "chrome_url_overrides": {"newtab": "newtab.html"},
         "background": {"service_worker": "newtab_bg.js"},
@@ -335,18 +284,29 @@ def _seed_or_extract_chromium_runtime(portable_zip: Path, dist_root: Path, app_d
     extract_archive(portable_zip, app_dir, strip_leading_dirs=prefix)
 
 
-def _bundle_portable_agent_runtime(forge_root: Path, target_dir: Path, profile: ForkProfile, ui_key: str) -> Path:
+def _bundle_portable_agent_runtime(
+    forge_root: Path,
+    target_dir: Path,
+    profile: ForkProfile,
+    ui_key: str,
+    *,
+    release_scrub: bool = False,
+) -> Path:
     """Copy pure-stdlib `forge/` (~180 KB) into `target_dir/Agent/` so the portable folder runs standalone anywhere."""
+    _ = forge_root
     agent_dir = target_dir / "Agent"
-    src_pkg = forge_root / "forge"
+    src_pkg = Path(__file__).resolve().parent
     dst_pkg = agent_dir / "forge"
     if dst_pkg.exists():
         shutil.rmtree(dst_pkg)
     shutil.copytree(src_pkg, dst_pkg, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     profile.save(agent_dir / "fork.json")
     out_dir = agent_dir / "outputs"
+    if release_scrub and out_dir.exists():
+        shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "local_ui_key.txt").write_text(ui_key + "\n", encoding=ENCODING, newline="\n")
+    if ui_key and not release_scrub:
+        atomic_write_private(out_dir / "local_ui_key.txt", ui_key + "\n")
     return agent_dir
 
 
@@ -354,11 +314,20 @@ def assemble_portable_distribution(
     portable_zip: Path,
     profile: ForkProfile,
     dist_root: Path,
+    *,
+    forge_root: Path | None = None,
+    release_scrub: bool = False,
 ) -> dict[str, object]:
     """Assemble a 100% relocatable, dual Human + AI Agent `Luminara Browser` Windows x64 distribution."""
     profile.validate()
-    forge_root = Path(__file__).resolve().parent.parent
-    ui_key = ensure_local_ui_key(forge_root)
+    pkg_parent = Path(__file__).resolve().parent.parent
+    if forge_root is not None:
+        resolved_forge = forge_root.resolve()
+    elif (pkg_parent / "fork.json").is_file() or (pkg_parent / "patches" / "luminara").is_dir():
+        resolved_forge = pkg_parent
+    else:
+        resolved_forge = dist_root.resolve().parent
+    ui_key = "" if release_scrub else ensure_local_ui_key(resolved_forge)
 
     target_dir = (dist_root / f"{profile.slug}-win64").resolve()
     app_dir = target_dir / "App"
@@ -369,7 +338,7 @@ def assemble_portable_distribution(
     if not chrome_exe.exists():
         raise FileNotFoundError(f"chrome.exe missing after runtime preparation in {app_dir}")
 
-    _bundle_portable_agent_runtime(forge_root, target_dir, profile, ui_key)
+    _bundle_portable_agent_runtime(resolved_forge, target_dir, profile, ui_key, release_scrub=release_scrub)
 
     pages_dir = app_dir / "luminara_pages"
     pages_dir.mkdir(parents=True, exist_ok=True)
@@ -418,16 +387,14 @@ def assemble_portable_distribution(
         ui_key=ui_key,
     )
 
-    # Preferences use loopback http://127.0.0.1:<agent_port>/newtab when co-browsing is enabled (100% path-independent!)
-    default_home_url = (
-        f"http://127.0.0.1:{profile.agent_port}/newtab"
-        if profile.enable_agent_cobrowsing
-        else "about:blank"
-    )
+    # Preferences use offline-first `chrome://newtab` when co-browsing is enabled (unifying origin with Ctrl+T!)
+    default_home_url = "chrome://newtab" if profile.enable_agent_cobrowsing else "about:blank"
     prefs_payload = json.dumps(_build_initial_preferences(profile, default_home_url), indent=2) + "\n"
     (app_dir / "initial_preferences").write_text(prefs_payload, encoding=ENCODING, newline="\n")
     (app_dir / "master_preferences").write_text(prefs_payload, encoding=ENCODING, newline="\n")
 
+    if release_scrub and profile_dir.exists():
+        shutil.rmtree(profile_dir)
     profile_dir.mkdir(parents=True, exist_ok=True)
     switches = list(profile.runtime_switches())
     if profile.enable_agent_cobrowsing:
@@ -440,11 +407,19 @@ def assemble_portable_distribution(
 
     # Valid PowerShell launcher (`Launch-<slug>.ps1`) — zero hardcoded machine paths & valid AST syntax!
     ps_switches_lines = ",\n  ".join("'" + sw.replace("'", "''") + "'" for sw in switches)
+    cobrowse_ps = "$true" if profile.enable_agent_cobrowsing else "$false"
     ps1_launcher = target_dir / f"Launch-{profile.slug}.ps1"
     ps1_body = f"""$ErrorActionPreference = 'Stop'
+function Quote-WinArg([string]$a) {{
+  if ($a -eq '') {{ return '""' }}
+  if ($a -notmatch '[\\s"]') {{ return $a }}
+  return '"' + ([regex]::Replace($a, '(\\\\*)(")', '$1$1\\"') -replace '(\\\\+)$', '$1$1') + '"'
+}}
+
 $root = $PSScriptRoot
-$agentWorkDir = if (Test-Path (Join-Path $root '..\\..\\forge\\__main__.py')) {{
-  (Resolve-Path (Join-Path $root '..\\..')).Path
+$devMain = Join-Path $root '..\\..\\forge\\__main__.py'
+$agentWorkDir = if (Test-Path -LiteralPath $devMain) {{
+  (Resolve-Path -LiteralPath (Join-Path $root '..\\..')).Path
 }} else {{
   Join-Path $root 'Agent'
 }}
@@ -452,37 +427,45 @@ $agentWorkDir = if (Test-Path (Join-Path $root '..\\..\\forge\\__main__.py')) {{
 $pyCmd = $null
 foreach ($venvRel in @('..\\.venv\\Scripts\\pythonw.exe', '..\\.venv\\Scripts\\python.exe', '.venv\\Scripts\\pythonw.exe', '.venv\\Scripts\\python.exe')) {{
   $cand = Join-Path $agentWorkDir $venvRel
-  if (Test-Path $cand) {{ $pyCmd = [pscustomobject]@{{ Source = (Resolve-Path $cand).Path }}; break }}
+  if (Test-Path -LiteralPath $cand) {{ $pyCmd = [pscustomobject]@{{ Source = (Resolve-Path -LiteralPath $cand).Path }}; break }}
 }}
 if (-not $pyCmd) {{
   $pyCmd = Get-Command pythonw, python -ErrorAction SilentlyContinue | Where-Object {{ $_.Source -and ($_.Source -notlike '*\\WindowsApps\\*') }} | Select-Object -First 1
 }}
 
-# First-run per-installation CSPRNG UI key rotation + every-launch active key sync across extensions/pages
+# First-run per-installation CSPRNG UI key rotation (preserving existing signed ledger keys) + every-launch sync
 $initMarker = Join-Path $root 'Profile\\.ui_key_initialized'
 $keyFile = Join-Path $agentWorkDir 'outputs\\local_ui_key.txt'
+$ledgerFile = Join-Path $agentWorkDir 'outputs\\action_ledger.jsonl'
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $keyFile) | Out-Null
-if (-not (Test-Path $initMarker) -or -not (Test-Path $keyFile)) {{
+New-Item -ItemType Directory -Force -Path (Join-Path $root 'Profile') | Out-Null
+if (-not (Test-Path -LiteralPath $keyFile) -or (-not (Test-Path -LiteralPath $initMarker) -and -not (Test-Path -LiteralPath $ledgerFile))) {{
   $bytes = New-Object byte[] 32
   $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
   $rng.GetBytes($bytes)
   $rng.Dispose()
   $genKey = ($bytes | ForEach-Object {{ $_.ToString('x2') }}) -join ''
   [System.IO.File]::WriteAllText($keyFile, ($genKey + "`n"), [System.Text.UTF8Encoding]::new($false))
-  New-Item -ItemType Directory -Force -Path (Join-Path $root 'Profile') | Out-Null
+}}
+if (-not (Test-Path -LiteralPath $initMarker)) {{
   [System.IO.File]::WriteAllText($initMarker, "ok`n", [System.Text.UTF8Encoding]::new($false))
 }}
-$activeKey = (Get-Content -Raw $keyFile).Trim()
+$activeKey = (Get-Content -Raw -LiteralPath $keyFile).Trim()
 if ($activeKey.Length -ge 32) {{
   $bundledKeyFile = Join-Path $root 'Agent\\outputs\\local_ui_key.txt'
-  if ((Split-Path -Parent $bundledKeyFile) -ne (Split-Path -Parent $keyFile) -and (Test-Path (Split-Path -Parent $bundledKeyFile))) {{
+  if ((Split-Path -Parent $bundledKeyFile) -ne (Split-Path -Parent $keyFile) -and (Test-Path -LiteralPath (Split-Path -Parent $bundledKeyFile))) {{
     [System.IO.File]::WriteAllText($bundledKeyFile, ($activeKey + "`n"), [System.Text.UTF8Encoding]::new($false))
   }}
+  $homeLumDir = Join-Path $HOME '.luminara-browser'
+  New-Item -ItemType Directory -Force -Path $homeLumDir | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $homeLumDir 'local_ui_key.txt'), ($activeKey + "`n"), [System.Text.UTF8Encoding]::new($false))
+  $jsSafeKey = $activeKey.Replace('\\', '\\\\').Replace('"', '\\"')
+  $rxSafeKey = $jsSafeKey.Replace('$', '$$')
   foreach ($rel in @('App\\luminara_pages\\newtab.html', 'App\\luminara_pages\\workspace.html', 'App\\forge_ntp\\index.html', 'App\\extensions\\luminara-copilot\\sidepanel.js', 'App\\extensions\\luminara-newtab\\newtab.js', 'App\\extensions\\luminara-newtab\\workspace.js')) {{
     $p = Join-Path $root $rel
-    if (Test-Path $p) {{
+    if (Test-Path -LiteralPath $p) {{
       $rawTxt = [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8)
-      $synced = [regex]::Replace($rawTxt, 'const UI_KEY = "[^"]*";', ('const UI_KEY = "' + $activeKey + '";'))
+      $synced = [regex]::Replace($rawTxt, 'const UI_KEY = "[^"]*";', ('const UI_KEY = "' + $rxSafeKey + '";'))
       if ($synced -ne $rawTxt) {{
         [System.IO.File]::WriteAllText($p, $synced, [System.Text.UTF8Encoding]::new($false))
       }}
@@ -492,7 +475,7 @@ if ($activeKey.Length -ge 32) {{
 
 # Per-session CSPRNG rotation for Privacy Shield v3 farbling seed (prevents static cross-restart fingerprint!)
 $farbleFile = Join-Path $root 'App\\extensions\\forge-shield\\farble.js'
-if (Test-Path $farbleFile) {{
+if (Test-Path -LiteralPath $farbleFile) {{
   $sBytes = New-Object byte[] 16
   $sRng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
   $sRng.GetBytes($sBytes)
@@ -503,10 +486,11 @@ if (Test-Path $farbleFile) {{
   [System.IO.File]::WriteAllText($farbleFile, $fUpdated, [System.Text.UTF8Encoding]::new($false))
 }}
 
-if ({'$true' if profile.enable_agent_cobrowsing else '$false'} -and $pyCmd) {{
+if ({cobrowse_ps} -and $pyCmd) {{
   $listening = Get-NetTCPConnection -LocalPort {profile.agent_port} -State Listen -ErrorAction SilentlyContinue
   if (-not $listening) {{
-    Start-Process -WindowStyle Hidden -FilePath $pyCmd.Source -WorkingDirectory $agentWorkDir -ArgumentList @('-m', 'forge', 'agent-daemon', '--port', '{profile.agent_port}', '--cdp-port', '{profile.cdp_port}')
+    $daemonArgs = @('-m', 'forge', 'agent-daemon', '--forge-root', $agentWorkDir, '--port', '{profile.agent_port}', '--cdp-port', '{profile.cdp_port}') | ForEach-Object {{ Quote-WinArg $_ }}
+    Start-Process -WindowStyle Hidden -FilePath $pyCmd.Source -WorkingDirectory $agentWorkDir -ArgumentList $daemonArgs
     for ($i = 0; $i -lt 20; $i++) {{
       if (Get-NetTCPConnection -LocalPort {profile.agent_port} -State Listen -ErrorAction SilentlyContinue) {{ break }}
       Start-Sleep -Milliseconds 100
@@ -517,18 +501,16 @@ if ({'$true' if profile.enable_agent_cobrowsing else '$false'} -and $pyCmd) {{
 $extShield = Join-Path $root 'App\\extensions\\forge-shield'
 $extCopilot = Join-Path $root 'App\\extensions\\luminara-copilot'
 $extNewtab = Join-Path $root 'App\\extensions\\luminara-newtab'
+$extList = if ({cobrowse_ps}) {{ @($extShield, $extCopilot, $extNewtab) -join ',' }} else {{ @($extShield, $extNewtab) -join ',' }}
 $chrome = Join-Path $root 'App\\chrome.exe'
 $argList = @(
   ("--user-data-dir=" + (Join-Path $root 'Profile')),
-  ("--load-extension=" + $extShield + "," + $extCopilot + "," + $extNewtab),
+  ("--load-extension=" + $extList),
   {ps_switches_lines},
-  "chrome://newtab"
+  "{default_home_url}"
 ) + $args
 
-# Quote whitespace-containing arguments for Windows PowerShell 5.1 Start-Process compatibility
-$quotedArgs = $argList | ForEach-Object {{
-  if ($_ -match '\\s') {{ '"' + ($_ -replace '"', '\\"') + '"' }} else {{ $_ }}
-}}
+$quotedArgs = $argList | ForEach-Object {{ Quote-WinArg $_ }}
 Start-Process -FilePath $chrome -ArgumentList $quotedArgs
 """
     ps1_launcher.write_text(ps1_body, encoding=ENCODING, newline="\n")

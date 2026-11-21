@@ -134,14 +134,42 @@ def _require_str(args: dict[str, Any], key: str) -> str:
     return val.strip()
 
 
+def _bool_opt(args: dict[str, Any], key: str, default: bool) -> bool:
+    val = args.get(key)
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        low = val.strip().lower()
+        if low in ("false", "0", "no", "off", ""):
+            return False
+        if low in ("true", "1", "yes", "on"):
+            return True
+    return bool(val)
+
+
 def _int_opt(args: dict[str, Any], key: str, default: int) -> int:
     val = args.get(key)
-    return default if val is None else int(val)
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        raise ValueError(f"Parameter {key!r} must be an integer, not boolean")
+    return int(val)
 
 
 def _float_opt(args: dict[str, Any], key: str, default: float) -> float:
+    import math
+
     val = args.get(key)
-    return default if val is None else float(val)
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        raise ValueError(f"Parameter {key!r} must be a number, not boolean")
+    out = float(val)
+    if not math.isfinite(out):
+        raise ValueError(f"Parameter {key!r} must be a finite number")
+    return out
 
 
 def dispatch_100x_tool(runtime: Any, name: str, args: dict[str, Any], agent_id: str) -> dict[str, Any] | None:
@@ -153,7 +181,7 @@ def dispatch_100x_tool(runtime: Any, name: str, args: dict[str, Any], agent_id: 
             snap = runtime.perception.capture_ax_snapshot(
                 tid,
                 max_nodes=_int_opt(args, "max_nodes", 250),
-                include_shadow_dom=bool(args.get("include_shadow_dom", True)),
+                include_shadow_dom=_bool_opt(args, "include_shadow_dom", True),
             )
             snap_tid = str(snap.get("target_id") or "")
             if snap_tid:
@@ -172,9 +200,9 @@ def dispatch_100x_tool(runtime: Any, name: str, args: dict[str, Any], agent_id: 
         if act == "hardware_click":
             res = runtime.perception.dispatch_hardware_click(
                 resolved_tid,
-                backend_node_id=int(args["backend_node_id"]) if args.get("backend_node_id") is not None else None,
-                x=float(args["x"]) if args.get("x") is not None else None,
-                y=float(args["y"]) if args.get("y") is not None else None,
+                backend_node_id=_int_opt(args, "backend_node_id", 0) if args.get("backend_node_id") is not None else None,
+                x=_float_opt(args, "x", 0.0) if args.get("x") is not None else None,
+                y=_float_opt(args, "y", 0.0) if args.get("y") is not None else None,
             )
             rec = runtime.ledger.record(agent_id, "hardware_click", str(res["target_id"]), res, summary="Compositor hardware click")
             return {**res, "receipt": rec}
@@ -182,8 +210,8 @@ def dispatch_100x_tool(runtime: Any, name: str, args: dict[str, Any], agent_id: 
             res = runtime.perception.dispatch_hardware_type(
                 resolved_tid,
                 str(args.get("text") or ""),
-                backend_node_id=int(args["backend_node_id"]) if args.get("backend_node_id") is not None else None,
-                press_enter=bool(args.get("press_enter", False)),
+                backend_node_id=_int_opt(args, "backend_node_id", 0) if args.get("backend_node_id") is not None else None,
+                press_enter=_bool_opt(args, "press_enter", False),
             )
             rec = runtime.ledger.record(
                 agent_id,
@@ -219,7 +247,7 @@ def dispatch_100x_tool(runtime: Any, name: str, args: dict[str, Any], agent_id: 
             tname,
             targs,
             target_id=resolved_tid,
-            auto_submit=bool(args.get("auto_submit", True)),
+            auto_submit=_bool_opt(args, "auto_submit", True),
         )
         rec = runtime.ledger.record(
             agent_id,
@@ -313,7 +341,7 @@ def dispatch_100x_tool(runtime: Any, name: str, args: dict[str, Any], agent_id: 
             res = runtime.lifecycle.hibernate_idle_tabs(
                 active_target_id=args.get("target_id"),
                 min_idle_sec=_float_opt(args, "min_idle_sec", 0.0),
-                dry_run=bool(args.get("dry_run", False)),
+                dry_run=_bool_opt(args, "dry_run", False),
             )
             rec = runtime.ledger.record(
                 agent_id,

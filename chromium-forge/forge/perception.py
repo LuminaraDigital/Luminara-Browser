@@ -114,19 +114,40 @@ def build_shadow_piercing_snapshot_js(*, max_elements: int = 250) -> str:
   const results = [];
   let shadowHostsVisited = 0;
 
+  function isNodeVisible(win, el) {{
+    let cur = el;
+    while (cur) {{
+      if (cur.nodeType === 1) {{
+        if (cur.hidden || cur.getAttribute('aria-hidden') === 'true') return false;
+        const st = win.getComputedStyle(cur);
+        if (st.visibility === 'hidden' || st.display === 'none' || parseFloat(st.opacity || '1') <= 0) return false;
+      }}
+      cur = cur.parentElement || (cur.getRootNode && cur.getRootNode().host) || null;
+    }}
+    return true;
+  }}
+
+  function slotAssignedText(el) {{
+    let txt = '';
+    for (const sl of Array.from(el.querySelectorAll ? el.querySelectorAll('slot') : [])) {{
+      if (typeof sl.assignedNodes === 'function') {{
+        txt += ' ' + sl.assignedNodes({{ flatten: true }}).map(n => n.textContent || '').join(' ');
+      }}
+    }}
+    return txt.trim();
+  }}
+
   function collectFromRoot(root, win, offsetX, offsetY, shadowPath, framePath) {{
     if (!root || results.length >= MAX_EL) return;
     const nodes = root.querySelectorAll(interactiveSel);
     for (const el of nodes) {{
       if (results.length >= MAX_EL) break;
-      if (el.closest && el.closest('[aria-hidden="true"], [hidden]')) continue;
       const rect = el.getBoundingClientRect();
       if (rect.width < 4 || rect.height < 4) continue;
-      const style = win.getComputedStyle(el);
-      if (style.visibility === 'hidden' || style.display === 'none' || parseFloat(style.opacity || '1') === 0) continue;
+      if (!isNodeVisible(win, el)) continue;
       const tag = el.tagName.toLowerCase();
       const label = String(
-        el.getAttribute('aria-label') || el.innerText || el.value ||
+        el.getAttribute('aria-label') || el.innerText || slotAssignedText(el) || el.value ||
         el.getAttribute('placeholder') || el.getAttribute('title') || ''
       ).trim().replace(/\\s+/g, ' ').slice(0, 120);
       results.push({{
@@ -263,6 +284,7 @@ class HybridPerceptionEngine:
                 except Exception:  # noqa: BLE001
                     continue
 
+        merged_elements = [*ax_elements, *oopif_elements] if (ax_elements or oopif_elements) else list(shadow_data.get("elements") or [])
         return {
             "target_id": resolved_tid,
             "url": shadow_data.get("url", ""),
@@ -271,7 +293,7 @@ class HybridPerceptionEngine:
             "ax_interactive_count": len(ax_elements),
             "oopif_interactive_count": len(oopif_elements),
             "shadow_hosts_pierced": int(shadow_data.get("shadow_hosts_pierced") or 0),
-            "elements": ax_elements if ax_elements else list(shadow_data.get("elements") or []),
+            "elements": merged_elements,
             "shadow_elements": list(shadow_data.get("elements") or [])[:max_nodes],
             "oopif_elements": oopif_elements,
             "frames": frames,
@@ -286,27 +308,51 @@ class HybridPerceptionEngine:
         x: float | None = None,
         y: float | None = None,
     ) -> dict[str, Any]:
-        """Resolve `backendDOMNodeId` box model (if provided) and dispatch real compositor mouse events."""
+        """Resolve `backendDOMNodeId` content quads / box model and dispatch real compositor mouse events."""
         resolved_tid = self.cdp._pick_target_id(target_id)
         click_x, click_y = x, y
 
         if backend_node_id is not None:
-            _tid, res = self.cdp.run_session(
-                resolved_tid,
-                [
-                    ("DOM.enable", {}),
-                    ("DOM.scrollIntoViewIfNeeded", {"backendNodeId": int(backend_node_id)}),
-                    ("DOM.getBoxModel", {"backendNodeId": int(backend_node_id)}),
-                ],
-                timeout=10.0,
-            )
-            model = (res[-1] or {}).get("model") or {}
-            content_quad = model.get("content") or model.get("border") or []
-            if len(content_quad) >= 8:
-                xs = content_quad[0::2]
-                ys = content_quad[1::2]
-                click_x = sum(xs) / len(xs)
-                click_y = sum(ys) / len(ys)
+            bid = int(backend_node_id)
+            quad: list[float] = []
+            try:
+                _tid, q_res = self.cdp.run_session(
+                    resolved_tid,
+                    [
+                        ("DOM.enable", {}),
+                        ("DOM.scrollIntoViewIfNeeded", {"backendNodeId": bid}),
+                        ("DOM.getContentQuads", {"backendNodeId": bid}),
+                    ],
+                    timeout=10.0,
+                )
+                quads = (q_res[-1] or {}).get("quads") or []
+                if quads and len(quads[0]) >= 8:
+                    quad = quads[0]
+            except Exception:  # noqa: BLE001
+                quad = []
+            if not quad:
+                try:
+                    _tid, res = self.cdp.run_session(
+                        resolved_tid,
+                        [
+                            ("DOM.enable", {}),
+                            ("DOM.getBoxModel", {"backendNodeId": bid}),
+                        ],
+                        timeout=10.0,
+                    )
+                    model = (res[-1] or {}).get("model") or {}
+                    quad = model.get("content") or model.get("border") or []
+                except Exception as exc:
+                    if click_x is None or click_y is None:
+                        raise CDPError(f"Could not resolve element geometry for backend_node_id={bid}: {exc}") from exc
+            if len(quad) >= 8:
+                xs = quad[0::2]
+                ys = quad[1::2]
+                if max(xs) > min(xs) and max(ys) > min(ys) and max(xs) > 0 and max(ys) > 0:
+                    click_x = sum(xs) / len(xs)
+                    click_y = sum(ys) / len(ys)
+            if click_x is None or click_y is None:
+                raise CDPError(f"Element backend_node_id={bid} has no visible layout box")
 
         if click_x is None or click_y is None:
             raise CDPError("Hardware click requires either backend_node_id or (x, y) coordinates")
@@ -331,6 +377,7 @@ class HybridPerceptionEngine:
     ) -> dict[str, Any]:
         """Focus target via compositor click/focus and emit native `Input.insertText` + optional Enter."""
         resolved_tid = self.cdp._pick_target_id(target_id)
+        clean_text = (text or "").encode("utf-8", "replace").decode("utf-8")
         cmds: list[tuple[str, dict[str, Any]]] = []
         if backend_node_id is not None:
             cmds.extend(
@@ -340,15 +387,26 @@ class HybridPerceptionEngine:
                     ("DOM.focus", {"backendNodeId": int(backend_node_id)}),
                 ]
             )
-        cmds.append(("Input.insertText", {"text": text}))
+        lines = clean_text.split("\n")
+        for l_idx, line_str in enumerate(lines):
+            tab_parts = line_str.split("\t")
+            for t_idx, seg in enumerate(tab_parts):
+                if seg:
+                    cmds.append(("Input.insertText", {"text": seg}))
+                if t_idx < len(tab_parts) - 1:
+                    cmds.append(("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Tab", "code": "Tab", "windowsVirtualKeyCode": 9}))
+                    cmds.append(("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Tab", "code": "Tab", "windowsVirtualKeyCode": 9}))
+            if l_idx < len(lines) - 1:
+                cmds.append(("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Enter", "code": "Enter", "text": "\r", "unmodifiedText": "\r", "windowsVirtualKeyCode": 13}))
+                cmds.append(("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13}))
         if press_enter:
-            cmds.append(("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13}))
+            cmds.append(("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Enter", "code": "Enter", "text": "\r", "unmodifiedText": "\r", "windowsVirtualKeyCode": 13}))
             cmds.append(("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13}))
         self.cdp.run_session(resolved_tid, cmds, timeout=12.0)
         return {
             "ok": True,
             "target_id": resolved_tid,
             "mode": "compositor_hardware_type",
-            "chars_inserted": len(text),
+            "chars_inserted": len(clean_text),
             "press_enter": press_enter,
         }
