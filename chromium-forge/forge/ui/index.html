@@ -187,7 +187,7 @@
     input[type="text"], select {
       width: 100%;
       background: var(--bg-code);
-      border: 1px solid var(--hairline);
+      border: 1px solid var(--border-control);
       border-radius: 8px;
       padding: 8px 10px;
       color: var(--ink-0);
@@ -395,7 +395,7 @@
           <span class="kicker" id="reaElapsed">-- ms</span>
         </div>
         <div class="obl-list" id="oblContainer">
-          <div style="color:var(--ink-2); font-size:12px;">Click "Run REA Gate (14/14)" to execute all 14 obligation checks.</div>
+          <div style="color:var(--ink-2); font-size:12px;">Click "Run REA Gate (21/21)" to execute all 21 obligation checks.</div>
         </div>
       </section>
     </div>
@@ -569,11 +569,19 @@
       }
     }
 
-    document.querySelectorAll('#artifactTabs .tab-btn').forEach(btn => {
+    const artTabBtns = Array.from(document.querySelectorAll('#artifactTabs .tab-btn'));
+    artTabBtns.forEach((btn, idx) => {
       btn.addEventListener('click', () => {
         activeTab = btn.dataset.tab;
         try { localStorage.setItem(LS_KEY, activeTab); } catch (_e) {}
         syncCodeView();
+      });
+      btn.addEventListener('keydown', e => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        const next = artTabBtns[(idx + (e.key === 'ArrowRight' ? 1 : -1) + artTabBtns.length) % artTabBtns.length];
+        next.focus();
+        next.click();
       });
     });
 
@@ -616,7 +624,7 @@
     });
 
     document.getElementById('btnVerify').addEventListener('click', e => {
-      runWithBusy(e.currentTarget, 'Verifying 14/14...', async () => {
+      runWithBusy(e.currentTarget, 'Verifying 21/21...', async () => {
         const data = await postJson('/api/verify', {});
         renderObligations(data.rea_report);
         const okTone = data.rea_report.all_obligations_passed ? 'ok' : 'err';

@@ -1,7 +1,7 @@
 """Luminara v3.1.0 Perplexity REA Suite MCP v2 Tool Schemas & Dispatchers (`forge/agent_tools_v31.py`).
 
 Isolated from `agent_tools_100x.py` and `agent_server.py` so every file stays well below
-the 1,000-line ceiling while expanding MCP v2 from 20 -> 24 tools and 7 -> 9 resources:
+the 1,000-line ceiling while expanding MCP v2 to 28 tools and 9 resources:
 - `browser_sequence_guard`: Numbat-derived multi-step chain detector & signed `CASE-*.zip` casebundles.
 - `browser_vrt_isolation`: `rules_web_e2e`-derived declared-origin network lock & pure-stdlib PNG VRT.
 - `browser_monitors`: `perplexity-py` + `SPACE` fenced Web Monitors & CAS Playbook Revisions.

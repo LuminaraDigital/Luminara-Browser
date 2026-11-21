@@ -83,10 +83,17 @@ def classify_event_tags(tool_name: str, params: dict[str, Any], target_url: str 
     tags: set[str] = set()
     t = (tool_name or "").strip().lower()
     act = str(params.get("action") or "").strip().lower()
-    blob = " ".join(
+    blob_parts = [
         str(params.get(k) or "")
         for k in ("script", "text", "url", "start_url", "webhook_url", "target_url", "goal", "prompt_text", "tool_name", "query")
-    )
+    ]
+    for struct_k in ("arguments", "steps"):
+        if params.get(struct_k) is not None:
+            try:
+                blob_parts.append(json.dumps(params[struct_k], ensure_ascii=False)[:2000])
+            except Exception:  # noqa: BLE001
+                blob_parts.append(str(params[struct_k])[:2000])
+    blob = " ".join(p for p in blob_parts if p)
     # Tokenize command-like strings via shlex without failing on unbalanced quotes
     try:
         tokens = shlex.split(blob[:2000], posix=True)
@@ -96,11 +103,12 @@ def classify_event_tags(tool_name: str, params: dict[str, Any], target_url: str 
 
     if t in (
         "browser_snapshot",
-        "browser_perception_axtree",
         "browser_extract_structured",
         "browser_generative_ui",
         "webmcp_list_tools",
-    ) or (t == "browser_outline" and act in ("", "snapshot", "diff", "grep")):
+    ) or (t == "browser_perception_axtree" and act in ("", "snapshot")) or (
+        t == "browser_outline" and act in ("", "snapshot", "diff", "grep")
+    ):
         tags.add("dom_recon")
     if t == "browser_vault" and act in ("fill", "enter_totp"):
         tags.add("vault_access")
@@ -118,11 +126,12 @@ def classify_event_tags(tool_name: str, params: dict[str, Any], target_url: str 
 
     method_hint = str(params.get("method") or "").upper()
     is_outbound_action = (
-        t in ("browser_open_tab", "webmcp_call_tool", "browser_exec_pipeline", "browser_bulk_extract")
-        or (t == "browser_act" and act in ("click", "type", "navigate"))
+        t in ("browser_open_tab", "webmcp_call_tool", "browser_exec_pipeline", "browser_bulk_extract", "browser_run_goal")
+        or (t == "browser_act" and act in ("click", "type", "navigate", "select"))
+        or (t == "browser_perception_axtree" and act in ("hardware_click", "hardware_type"))
         or (t == "browser_outline" and act in ("click", "type"))
-        or (t == "browser_run_goal" and bool(params.get("start_url")))
-        or (t == "browser_monitors" and act in ("create", "run_now") and bool(params.get("webhook_url")))
+        or (t == "browser_playbooks" and act == "replay")
+        or (t == "browser_monitors" and act in ("create", "run_now"))
         or method_hint in ("POST", "PUT", "PATCH", "DELETE")
     )
     if is_outbound_action:

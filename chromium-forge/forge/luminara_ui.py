@@ -12,6 +12,12 @@ from __future__ import annotations
 import html
 
 from .luminara_copilot_ext import SHARED_UI_TOKENS_CSS, _js_json, build_palette_js, write_copilot_extension
+from .luminara_logo3d import (
+    LOGO_3D_CSS,
+    build_logo_3d_hero_badge_html,
+    build_logo_3d_js,
+    build_logo_3d_splash_html,
+)
 from .luminara_workspace_ui import build_luminara_workspace_html
 from .models import ForkProfile
 
@@ -30,6 +36,9 @@ def build_luminara_newtab_html(
     eng_esc = html.escape(engine.name)
     daemon_base = f"http://127.0.0.1:{agent_port}"
     palette_iife = build_palette_js(engine.search_url, agent_port=agent_port)
+    logo_splash_html = build_logo_3d_splash_html(profile.brand_name, profile.chromium_version, agent_port, cdp_port)
+    logo_hero_badge_html = build_logo_3d_hero_badge_html(profile.brand_name)
+    logo_3d_js = build_logo_3d_js()
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -109,16 +118,19 @@ def build_luminara_newtab_html(
     .prio-high {{ color: var(--danger); }} .prio-medium {{ color: var(--amber); }} .prio-low {{ color: var(--accent); }}
     .toast-tray {{ position: fixed; right: 16px; bottom: 16px; z-index: 9999; display: grid; gap: 8px; max-width: min(360px, calc(100vw - 32px)); }}
     .toast {{ background: var(--bg-2); border: 1px solid var(--accent); box-shadow: 0 14px 32px oklch(0 0 0 / 0.35); border-radius: 12px; padding: 10px 14px; font-size: 12px; color: var(--ink-0); display: flex; justify-content: space-between; align-items: center; gap: 10px; }}
+{LOGO_3D_CSS}
     @media (prefers-reduced-motion: reduce) {{ *, *::before, *::after {{ transition: none !important; animation: none !important; }} }}
   </style>
 </head>
 <body>
+{logo_splash_html}
   <header>
     <div class="pill">
       <span class="dot" id="daemonDot"></span>
       <span id="daemonLabel">{brand_esc} · Zero Google Telemetry · Checking Agent Daemon...</span>
     </div>
     <div class="nav-actions">
+      <button class="btn-ghost" type="button" id="btnReplayIntro">◈ 3D Emblem</button>
       <a class="btn-ghost" href="{html.escape(workspace_uri)}">✦ Generative UI Studio</a>
       <button class="btn-ghost" type="button" id="btnCopyMcp">Copy MCP Endpoint</button>
       <span id="clock">--:--:--</span>
@@ -127,9 +139,12 @@ def build_luminara_newtab_html(
 
   <main>
     <div class="hero">
-      <div>
-        <div class="kicker">CHROMIUM {html.escape(profile.chromium_version)} · CDP :{cdp_port} · MCP v2 :{agent_port} · TRAP .{html.escape(profile.trap_tld)}</div>
-        <h1 id="greetingTitle">{brand_esc}</h1>
+      <div class="hero-brand-wrap">
+        {logo_hero_badge_html}
+        <div>
+          <div class="kicker">CHROMIUM {html.escape(profile.chromium_version)} · CDP :{cdp_port} · MCP v2 :{agent_port} · TRAP .{html.escape(profile.trap_tld)}</div>
+          <h1 id="greetingTitle">{brand_esc}</h1>
+        </div>
       </div>
       <div class="mono">Simultaneous Human + AI Co-Browsing Active</div>
     </div>
@@ -327,31 +342,29 @@ def build_luminara_newtab_html(
       try {{ return sessionStorage.getItem(KEY_SS) || ''; }} catch (_e) {{ return ''; }}
     }})();
 
+    let agentSessionTok = '';
     function apiHeaders(isJson) {{
       const h = {{}};
       const uiAuth = UI_KEY || sessionTok;
       if (uiAuth) h['X-Luminara-UI-Key'] = uiAuth;
-      const passport = (loadSettings().passportToken || '').trim();
+      const passport = agentSessionTok || (loadSettings().passportToken || '').trim();
       if (passport) h['Authorization'] = 'Bearer ' + passport;
       if (isJson) h['Content-Type'] = 'application/json';
       return h;
     }}
 
     async function exchangePassportSession() {{
-      if (UI_KEY || sessionTok || !(loadSettings().passportToken || '').trim()) return;
+      if (UI_KEY || sessionTok || agentSessionTok || !(loadSettings().passportToken || '').trim()) return;
       try {{
         const r = await fetch(DAEMON + '/api/agent/session-token', {{
           method: 'POST',
           headers: apiHeaders(true),
-          body: JSON.stringify({{ scope: 'ui', ttl_sec: 900 }}),
+          body: JSON.stringify({{ scope: 'agent', ttl_sec: 900 }}),
           signal: AbortSignal.timeout(4000)
         }});
         if (r.ok) {{
           const d = await r.json();
-          if (d && d.token) {{
-            sessionTok = d.token;
-            try {{ sessionStorage.setItem(KEY_SS, sessionTok); }} catch (_e) {{}}
-          }}
+          if (d && d.token) agentSessionTok = d.token;
         }}
       }} catch (_e) {{}}
     }}
@@ -830,7 +843,9 @@ def build_luminara_newtab_html(
             rBox.appendChild(row);
           }});
         }}
+        if (window.__luminaraSplashNotifyDaemon) window.__luminaraSplashNotifyDaemon(true, st);
       }} catch (_e) {{
+        if (window.__luminaraSplashNotifyDaemon) window.__luminaraSplashNotifyDaemon(false, null);
         dot.classList.add('offline');
         lbl.textContent = `${{BRAND}} · Offline Vault Mode`;
         const tBox = document.getElementById('liveTabsList');
@@ -893,6 +908,7 @@ def build_luminara_newtab_html(
         nxt.click();
       }}));
     }});
+    {logo_3d_js}
     applySettings();
     renderTodos();
     syncDaemon();

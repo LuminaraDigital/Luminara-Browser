@@ -112,7 +112,7 @@ def build_luminara_workspace_html(
       padding: 6px 8px; border-radius: 8px; background: var(--bg-2); font-size: 12px; min-width: 0;
     }}
     .attr-val {{
-      flex: 1 1 90px; min-width: 0;
+      flex: 1 1 90px; min-width: 0; min-height: 26px;
       background: transparent; border: 1px solid transparent; color: var(--ink-0);
       font-family: var(--font-mono); font-size: 12px; text-align: right; padding: 3px 6px; border-radius: 6px;
       font-variant-numeric: tabular-nums;
@@ -233,18 +233,25 @@ def build_luminara_workspace_html(
       const h = {{}};
       const uiAuth = UI_KEY || sessionTok;
       if (uiAuth) h['X-Luminara-UI-Key'] = uiAuth;
-      try {{
-        const s = JSON.parse(localStorage.getItem(KEY_SETTINGS) || '{{}}');
-        if (s && s.passportToken) h['Authorization'] = 'Bearer ' + String(s.passportToken).trim();
-      }} catch (_e) {{}}
+      if (agentSessionTok) {{
+        h['Authorization'] = 'Bearer ' + agentSessionTok;
+      }} else {{
+        try {{
+          const s = JSON.parse(localStorage.getItem(KEY_SETTINGS) || '{{}}');
+          if (s && s.passportToken) h['Authorization'] = 'Bearer ' + String(s.passportToken).trim();
+        }} catch (_e) {{}}
+      }}
       if (isJson) h['Content-Type'] = 'application/json';
       return h;
     }}
 
+    let agentSessionTok = '';
     async function exchangePassportSession(forceRefresh = false) {{
-      if (!forceRefresh && (UI_KEY || sessionTok)) return;
+      if (/^[0-9a-f]{{64}}$/i.test(sessionTok)) return;
+      const hdrs = apiHeaders(true);
+      if (!hdrs['X-Luminara-UI-Key'] && !hdrs['Authorization']) return;
+      if (!forceRefresh && (UI_KEY || sessionTok || agentSessionTok)) return;
       try {{
-        const hdrs = apiHeaders(true);
         const wantScope = Boolean(hdrs['X-Luminara-UI-Key']) ? 'ui' : 'agent';
         const r = await fetch(DAEMON + '/api/agent/session-token', {{
           method: 'POST',
@@ -257,6 +264,8 @@ def build_luminara_workspace_html(
           if (d && d.token && wantScope === 'ui') {{
             sessionTok = d.token;
             try {{ sessionStorage.setItem(KEY_SS, sessionTok); }} catch (_e) {{}}
+          }} else if (d && d.token && wantScope === 'agent') {{
+            agentSessionTok = d.token;
           }}
         }}
       }} catch (_e) {{}}
@@ -683,14 +692,15 @@ def build_luminara_workspace_html(
         sessionTok = val;
         try {{ sessionStorage.setItem(KEY_SS, val); }} catch (_e) {{}}
       }} else {{
+        agentSessionTok = '';
         try {{
           const cur = JSON.parse(localStorage.getItem(KEY_SETTINGS) || '{{}}');
           cur.passportToken = val;
           localStorage.setItem(KEY_SETTINGS, JSON.stringify(cur));
         }} catch (_e) {{}}
+        await exchangePassportSession(true);
       }}
       document.getElementById('wsPassportInput').value = '';
-      await exchangePassportSession(true);
       if (currentView === 'telemetry') await fetchTelemetryBundle(false);
       else await hydrateFromDaemon(true);
     }});

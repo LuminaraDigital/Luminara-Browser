@@ -31,8 +31,11 @@ MODEL_PRICES_USD_PER_1M: dict[str, dict[str, Decimal]] = {
     "sonar-pro": {"input": Decimal("3.00"), "cached_input": Decimal("0.30"), "output": Decimal("15.00")},
     "pplx-decider-v1.1-27b": {"input": Decimal("0.80"), "cached_input": Decimal("0.10"), "output": Decimal("2.40")},
     "gpt-5.5": {"input": Decimal("5.00"), "cached_input": Decimal("0.50"), "output": Decimal("30.00")},
+    "gpt-4o-mini": {"input": Decimal("0.15"), "cached_input": Decimal("0.075"), "output": Decimal("0.60")},
     "claude-opus-4-7": {"input": Decimal("5.00"), "cached_input": Decimal("0.50"), "output": Decimal("25.00")},
+    "claude-3-5-haiku-latest": {"input": Decimal("0.80"), "cached_input": Decimal("0.08"), "output": Decimal("4.00")},
     "gemini-3-flash": {"input": Decimal("0.50"), "cached_input": Decimal("0.05"), "output": Decimal("3.00")},
+    "gemini-2.5-flash": {"input": Decimal("0.30"), "cached_input": Decimal("0.03"), "output": Decimal("2.50")},
 }
 WEB_SEARCH_CALL_USD = Decimal("0.01")
 
@@ -172,6 +175,8 @@ class EvalCostLedger:
 def validate_perplexity_wire_payload(endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Validate structured payloads against observed `perplexity-py` v0.48.1 wire schemas."""
     ep = (endpoint or "").strip()
+    if ep not in _WIRE_REQUIRED_KEYS and f"{ep}.create" in _WIRE_REQUIRED_KEYS:
+        ep = f"{ep}.create"
     if ep not in _WIRE_REQUIRED_KEYS:
         raise ValueError(f"Unknown Perplexity SDK endpoint: {ep!r}")
     if not isinstance(payload, dict):
@@ -241,11 +246,11 @@ def _call_live_provider(prov: str, model_id: str, api_key: str, case: dict[str, 
             "search_calls": 1,
         }
     if prov == "gemini":
-        g_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={urllib.parse.quote(api_key)}"
+        g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{urllib.parse.quote(model_id)}:generateContent"
         req = urllib.request.Request(
             g_url,
             data=json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode(ENCODING),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=20.0) as resp:
@@ -264,7 +269,7 @@ def _call_live_provider(prov: str, model_id: str, api_key: str, case: dict[str, 
     if prov == "openai":
         req = urllib.request.Request(
             "https://api.openai.com/v1/chat/completions",
-            data=json.dumps({"model": "gpt-4o-mini", "messages": [{"role": "user", "content": prompt}]}).encode(ENCODING),
+            data=json.dumps({"model": model_id, "messages": [{"role": "user", "content": prompt}]}).encode(ENCODING),
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             method="POST",
         )
@@ -283,7 +288,7 @@ def _call_live_provider(prov: str, model_id: str, api_key: str, case: dict[str, 
         }
     req = urllib.request.Request(
         "https://api.anthropic.com/v1/messages",
-        data=json.dumps({"model": "claude-3-5-haiku-latest", "max_tokens": 512, "messages": [{"role": "user", "content": prompt}]}).encode(ENCODING),
+        data=json.dumps({"model": model_id, "max_tokens": 512, "messages": [{"role": "user", "content": prompt}]}).encode(ENCODING),
         headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
         method="POST",
     )
@@ -314,15 +319,23 @@ def execute_search_eval_suite(
     provider_models = {
         "luminara": "luminara-local-0llm",
         "perplexity": "sonar-pro",
-        "gemini": "gemini-3-flash",
-        "openai": "gpt-5.5",
-        "anthropic": "claude-opus-4-7",
+        "gemini": "gemini-2.5-flash",
+        "openai": "gpt-4o-mini",
+        "anthropic": "claude-3-5-haiku-latest",
     }
     for p_chk in selected_providers:
         if p_chk not in provider_models:
             raise ValueError(f"Unsupported eval provider: {p_chk!r}; allowed: {sorted(provider_models)}")
 
-    eval_cases = list(cases) if cases else list(BUILTIN_EVAL_CASES)
+    suite_key = (suite or "extraction").strip().lower()
+    if cases:
+        eval_cases = list(cases)
+    elif suite_key == "citation":
+        eval_cases = [c for c in BUILTIN_EVAL_CASES if c["case_id"] in ("EVAL-02", "EVAL-03")]
+    elif suite_key == "widesearch_mini":
+        eval_cases = [c for c in BUILTIN_EVAL_CASES if c["case_id"] in ("EVAL-01", "EVAL-03")]
+    else:
+        eval_cases = list(BUILTIN_EVAL_CASES)
     scorecards: list[dict[str, Any]] = []
     for prov in selected_providers:
         model_id = provider_models[prov]
@@ -351,27 +364,35 @@ def execute_search_eval_suite(
 
         for case in eval_cases:
             t0 = time.perf_counter()
-            if prov == "luminara":
-                ext = extract_structured_page(case["fixture_html"], case["fixture_url"])
-                synthesized = json.dumps(ext["rows"], ensure_ascii=False)
-                cites = [case["fixture_url"]]
-                in_tok = cached_tok = out_tok = s_calls = 0
-            elif provider_caller is not None:
-                resp_p = provider_caller(prov, model_id, case)
-                synthesized = str(resp_p.get("answer") or "")
-                cites = [str(u) for u in (resp_p.get("citations") or [])]
-                in_tok = int(resp_p.get("input_tokens") or 0)
-                cached_tok = int(resp_p.get("cached_input_tokens") or 0)
-                out_tok = int(resp_p.get("output_tokens") or 0)
-                s_calls = int(resp_p.get("search_calls") or 0)
-            else:
-                resp_p = _call_live_provider(prov, model_id, api_key, case)
-                synthesized = str(resp_p.get("answer") or "")
-                cites = [str(u) for u in (resp_p.get("citations") or [])]
-                in_tok = int(resp_p.get("input_tokens") or 0)
-                cached_tok = int(resp_p.get("cached_input_tokens") or 0)
-                out_tok = int(resp_p.get("output_tokens") or 0)
-                s_calls = int(resp_p.get("search_calls") or 0)
+            call_error = ""
+            cost_known = True
+            in_tok = cached_tok = out_tok = s_calls = 0
+            synthesized = ""
+            cites: list[str] = []
+            try:
+                if prov == "luminara":
+                    ext = extract_structured_page(case["fixture_html"], case["fixture_url"])
+                    synthesized = json.dumps(ext["rows"], ensure_ascii=False)
+                    cites = [case["fixture_url"]]
+                elif provider_caller is not None:
+                    resp_p = provider_caller(prov, model_id, case)
+                    synthesized = str(resp_p.get("answer") or "")
+                    cites = [str(u) for u in (resp_p.get("citations") or [])]
+                    in_tok = int(resp_p.get("input_tokens") or 0)
+                    cached_tok = int(resp_p.get("cached_input_tokens") or 0)
+                    out_tok = int(resp_p.get("output_tokens") or 0)
+                    s_calls = int(resp_p.get("search_calls") or 0)
+                else:
+                    resp_p = _call_live_provider(prov, model_id, api_key, case)
+                    synthesized = str(resp_p.get("answer") or "")
+                    cites = [str(u) for u in (resp_p.get("citations") or [])]
+                    in_tok = int(resp_p.get("input_tokens") or 0)
+                    cached_tok = int(resp_p.get("cached_input_tokens") or 0)
+                    out_tok = int(resp_p.get("output_tokens") or 0)
+                    s_calls = int(resp_p.get("search_calls") or 0)
+            except Exception as exc:  # noqa: BLE001
+                call_error = str(exc)[:180]
+                cost_known = False
 
             dt_ms = round((time.perf_counter() - t0) * 1000, 3)
             latencies.append(dt_ms)
@@ -384,9 +405,13 @@ def execute_search_eval_suite(
                     output_tokens=out_tok,
                     search_calls=s_calls,
                     model=model_id,
+                    cost_known=cost_known,
                 ),
             )
-            case_results.append({"case_id": case["case_id"], "latency_ms": dt_ms, **grade})
+            rec_item: dict[str, Any] = {"case_id": case["case_id"], "latency_ms": dt_ms, **grade}
+            if call_error:
+                rec_item["error"] = call_error
+            case_results.append(rec_item)
 
         avg_f1 = round(sum(c["composite_f1"] for c in case_results) / len(case_results), 4) if case_results else 0.0
         scorecards.append(

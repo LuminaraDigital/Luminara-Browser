@@ -23,6 +23,7 @@ import contextlib
 import difflib
 import hashlib
 import html
+from html.parser import HTMLParser
 import http.client
 import ipaddress
 import json
@@ -127,15 +128,15 @@ def post_ssrf_pinned_webhook(url: str, payload: dict[str, Any], *, timeout: floa
     pinned_ip = resolved_ips[0]
     path_q = (parsed.path or "/") + (f"?{parsed.query}" if parsed.query else "")
     body_bytes = json.dumps(payload, ensure_ascii=False).encode(ENCODING)
-    host_hdr = f"{host}:{port}" if parsed.port else host
+    host_fmt = f"[{host}]" if ":" in host else host
+    host_hdr = f"{host_fmt}:{port}" if parsed.port else host_fmt
     raw_sock = socket.create_connection((pinned_ip, port), timeout=timeout)
+    conn: http.client.HTTPConnection | None = None
+    sock: socket.socket = raw_sock
     try:
-        sock = (
-            ssl.create_default_context().wrap_socket(raw_sock, server_hostname=host)
-            if scheme == "https"
-            else raw_sock
-        )
-        conn = http.client.HTTPConnection(host, port, timeout=timeout)
+        if scheme == "https":
+            sock = ssl.create_default_context().wrap_socket(raw_sock, server_hostname=host)
+        conn = http.client.HTTPConnection(host_fmt, port, timeout=timeout)
         conn.sock = sock
         conn.request(
             "POST",
@@ -147,11 +148,79 @@ def post_ssrf_pinned_webhook(url: str, payload: dict[str, Any], *, timeout: floa
         resp.read(4096)
         status_code = int(resp.status)
     finally:
-        try:
-            raw_sock.close()
-        except OSError:
-            pass
+        if conn is not None:
+            try:
+                conn.close()
+            except OSError:
+                pass
+        for s_obj in (sock, raw_sock):
+            try:
+                s_obj.close()
+            except OSError:
+                pass
     return {"dispatched": 200 <= status_code < 300, "http_status": status_code, "pinned_ip": pinned_ip}
+
+
+_VOID_HTML_TAGS = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"})
+
+
+class _SelectorHTMLSlicer(HTMLParser):
+    """Depth-tracking HTML slicer matching exact `#id`, `.class`, or `tag` across nested elements."""
+
+    def __init__(self, mode: str, token: str) -> None:
+        super().__init__(convert_charrefs=False)
+        self._mode, self._token = mode, token
+        self._depth = 0
+        self._buf: list[str] = []
+        self.chunks: list[str] = []
+
+    def _matches(self, tag: str, attrs: list[tuple[str, str | None]]) -> bool:
+        amap = {k.lower(): (v or "") for k, v in attrs}
+        if self._mode == "id":
+            return amap.get("id", "") == self._token
+        if self._mode == "class":
+            return self._token in amap.get("class", "").split()
+        return tag.lower() == self._token
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        raw = self.get_starttag_text() or f"<{tag}>"
+        if self._depth > 0:
+            self._buf.append(raw)
+            if tag.lower() not in _VOID_HTML_TAGS:
+                self._depth += 1
+        elif self._matches(tag, attrs):
+            if tag.lower() in _VOID_HTML_TAGS:
+                self.chunks.append(raw)
+            else:
+                self._buf = [raw]
+                self._depth = 1
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        raw = self.get_starttag_text() or f"<{tag}/>"
+        if self._depth > 0:
+            self._buf.append(raw)
+        elif self._matches(tag, attrs):
+            self.chunks.append(raw)
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._depth > 0:
+            self._buf.append(f"</{tag}>")
+            self._depth -= 1
+            if self._depth == 0:
+                self.chunks.append("".join(self._buf))
+                self._buf = []
+
+    def handle_data(self, data: str) -> None:
+        if self._depth > 0:
+            self._buf.append(data)
+
+    def handle_entityref(self, name: str) -> None:
+        if self._depth > 0:
+            self._buf.append(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        if self._depth > 0:
+            self._buf.append(f"&#{name};")
 
 
 def _slice_html_by_selector(html_src: str, selector: str) -> str:
@@ -159,18 +228,16 @@ def _slice_html_by_selector(html_src: str, selector: str) -> str:
     if not sel or sel.lower() in ("body", "html", "*"):
         return html_src
     if sel.startswith("#") and re.match(r"^#[A-Za-z0-9_\-]+$", sel):
-        esc_id = re.escape(sel[1:])
-        m = re.search(rf'(?is)<([a-z0-9]+)\b[^>]*\bid=["\']?{esc_id}["\']?[^>]*>(.*?)</\1>', html_src)
-        return m.group(0) if m else ""
-    if sel.startswith(".") and re.match(r"^\.[A-Za-z0-9_\-]+$", sel):
-        esc_cls = re.escape(sel[1:])
-        m = re.search(rf'(?is)<([a-z0-9]+)\b[^>]*\bclass=["\'][^"\']*\b{esc_cls}\b[^"\']*["\'][^>]*>(.*?)</\1>', html_src)
-        return m.group(0) if m else ""
-    if re.match(r"^[a-zA-Z][a-zA-Z0-9\-]*$", sel):
-        esc_tag = re.escape(sel)
-        matches = [m.group(0) for m in re.finditer(rf"(?is)<{esc_tag}\b[^>]*>.*?</{esc_tag}>", html_src)]
-        return "\n".join(matches) if matches else ""
-    return html_src
+        slicer = _SelectorHTMLSlicer("id", sel[1:])
+    elif sel.startswith(".") and re.match(r"^\.[A-Za-z0-9_\-]+$", sel):
+        slicer = _SelectorHTMLSlicer("class", sel[1:])
+    elif re.match(r"^[a-zA-Z][a-zA-Z0-9\-]*$", sel):
+        slicer = _SelectorHTMLSlicer("tag", sel.lower())
+    else:
+        return html_src
+    slicer.feed(html_src or "")
+    slicer.close()
+    return "\n".join(slicer.chunks)
 
 
 def _visible_text_from_html(html_src: str) -> str:
@@ -325,10 +392,11 @@ class MonitorEvalEngine:
         explicit_steps = steps is not None
         if steps is None and self.playbooks is not None:
             pb = self.playbooks.get_playbook(pid)
-            if pb:
-                domain = domain or str(pb.get("domain") or "")
-                goal = goal or str(pb.get("goal_example") or pb.get("goal") or "")
-                steps = list(pb.get("steps") or [])
+            if not pb:
+                raise ValueError(f"Playbook {pid!r} not found in PlaybookMemory; supply explicit steps or record a run first")
+            domain = domain or str(pb.get("domain") or "")
+            goal = goal or str(pb.get("goal_example") or pb.get("goal") or "")
+            steps = list(pb.get("steps") or [])
         clean_steps = self.redactor.redact_payload(steps or [])
 
         with self._lock, self._connect() as conn:
@@ -397,7 +465,9 @@ class MonitorEvalEngine:
                 expected_revision=expected_revision,
             )
             if self.playbooks is not None:
-                self.playbooks.put_playbook(pid, domain=domain or "local", goal=goal, steps=steps)
+                existing_pb = self.playbooks.get_playbook(pid) or {}
+                eff_domain = domain or str(existing_pb.get("domain") or "") or "local"
+                self.playbooks.put_playbook(pid, domain=eff_domain, goal=goal, steps=steps)
         return {"ok": True, "rolled_back_to": target_revision, **snap}
 
     # ---- Fenced Web Monitors ----
@@ -500,14 +570,17 @@ class MonitorEvalEngine:
             if injected_html is not None:
                 scoped_html = _slice_html_by_selector(injected_html, extract_sel)
             elif self.cdp is not None and self.cdp.is_alive():
-                tab = self.cdp.open_tab(target_url, background=True)
+                tab = self.cdp.open_tab("about:blank", background=True)
                 try:
+                    self.cdp.navigate(tab["target_id"], target_url, settle_sec=0.6)
                     if extract_sel and extract_sel.lower() not in ("body", "html", "*"):
                         sel_json = json.dumps(extract_sel)
                         scoped_val = self.cdp.evaluate_js(
                             tab["target_id"],
-                            f"(() => {{ const n = document.querySelector({sel_json}); return n ? n.outerHTML : ''; }})()",
+                            f"(() => {{ try {{ return Array.from(document.querySelectorAll({sel_json})).map(n => n.outerHTML).join('\\n'); }} catch (_e) {{ return null; }} }})()",
                         )
+                        if scoped_val is None:
+                            raise ValueError(f"Invalid CSS extract_selector: {extract_sel!r}")
                         scoped_html = str(scoped_val or "")
                     else:
                         snap = self.cdp.evaluate_js(tab["target_id"], build_dom_snapshot_js(show_badges=False, agent_label=""))
@@ -597,15 +670,17 @@ class MonitorEvalEngine:
         }
         if status == "CHANGED" and webhook_url:
             sender = webhook_sender or post_ssrf_pinned_webhook
-            wh_payload = {
-                "monitor_id": mid,
-                "run_id": run_id,
-                "status": status,
-                "target_url": target_url,
-                "content_sha256": cur_sha,
-                "diff_summary": diff_summary,
-                "receipt_id": rec_id,
-            }
+            wh_payload = self.redactor.redact_payload(
+                {
+                    "monitor_id": mid,
+                    "run_id": run_id,
+                    "status": status,
+                    "target_url": target_url,
+                    "content_sha256": cur_sha,
+                    "diff_summary": diff_summary,
+                    "receipt_id": rec_id,
+                }
+            )
             try:
                 out["webhook"] = sender(webhook_url, wh_payload)
             except Exception as exc:  # noqa: BLE001

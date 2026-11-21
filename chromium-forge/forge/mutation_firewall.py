@@ -12,6 +12,7 @@ by autonomous agents before bytes leave Chromium's NetworkService:
 
 from __future__ import annotations
 
+import fnmatch
 import re
 import secrets
 import threading
@@ -52,7 +53,7 @@ class NetworkMutationFirewall:
         self.cdp = cdp
         self.redactor = redactor or DEFAULT_REDACTOR
         self._lock = threading.Lock()
-        self._guarded_targets: set[str] = set()
+        self._guarded_targets: dict[str, str] = {}
         self._pending: dict[str, dict[str, Any]] = {}
         self._history: list[dict[str, Any]] = []
         if hasattr(self.cdp, "register_fetch_hook"):
@@ -80,27 +81,28 @@ class NetworkMutationFirewall:
         t_id = str(event.get("target_id") or "")
         if t_id:
             with self._lock:
-                self._guarded_targets.discard(t_id)
+                self._guarded_targets.pop(t_id, None)
             self._evict_target_pending(t_id)
 
     def enable_guard(self, target_id: str | None = None, *, url_pattern: str = "*") -> dict[str, Any]:
         """Enable CDP `Fetch` request interception on `target_id`."""
         tid = self.cdp._pick_target_id(target_id)
+        pat = (url_pattern or "*").strip() or "*"
         with self._lock:
-            self._guarded_targets.add(tid)
+            self._guarded_targets[tid] = pat
         if hasattr(self.cdp, "set_fetch_interception"):
-            self.cdp.set_fetch_interception(tid, "mutation_firewall", enabled=True, url_pattern=url_pattern)
+            self.cdp.set_fetch_interception(tid, "mutation_firewall", enabled=True, url_pattern=pat)
         else:
             self.cdp.run_session(
                 tid,
-                [("Fetch.enable", {"patterns": [{"urlPattern": url_pattern, "requestStage": "Request"}]})],
+                [("Fetch.enable", {"patterns": [{"urlPattern": pat, "requestStage": "Request"}]})],
             )
-        return {"ok": True, "target_id": tid, "guard_enabled": True, "url_pattern": url_pattern}
+        return {"ok": True, "target_id": tid, "guard_enabled": True, "url_pattern": pat}
 
     def disable_guard(self, target_id: str | None = None) -> dict[str, Any]:
         tid = self.cdp._pick_target_id(target_id)
         with self._lock:
-            self._guarded_targets.discard(tid)
+            self._guarded_targets.pop(tid, None)
         self._evict_target_pending(tid)
         if hasattr(self.cdp, "set_fetch_interception"):
             self.cdp.set_fetch_interception(tid, "mutation_firewall", enabled=False)
@@ -123,9 +125,11 @@ class NetworkMutationFirewall:
 
         is_response_stage = ("responseStatusCode" in params) or ("responseErrorReason" in params)
         with self._lock:
-            is_guarded = bool(target_id and (target_id in self._guarded_targets))
+            pattern = self._guarded_targets.get(target_id) if target_id else None
 
-        if is_response_stage or (not is_guarded) or (method not in MUTATING_HTTP_METHODS):
+        if is_response_stage or (pattern is None) or (method not in MUTATING_HTTP_METHODS):
+            return None
+        if pattern != "*" and not fnmatch.fnmatchcase(url, pattern):
             return None
 
         raw_post = str(req.get("postData") or "")

@@ -91,8 +91,10 @@ def _write_shield_extension(ext_dir: Path, profile: ForkProfile) -> None:
     ext_dir.mkdir(parents=True, exist_ok=True)
     icons_dir = ext_dir / "icons"
     icons_dir.mkdir(parents=True, exist_ok=True)
+    from .luminara_logo3d import get_logo_icon_png
+
     for px in (16, 48, 128):
-        (icons_dir / f"icon{px}.png").write_bytes(make_solid_emerald_png(px))
+        (icons_dir / f"icon{px}.png").write_bytes(get_logo_icon_png(px) or make_solid_emerald_png(px))
 
     rules = compile_dnr_shield_rules(profile)
     (ext_dir / "rules.json").write_text(json.dumps(rules, indent=2) + "\n", encoding=ENCODING, newline="\n")
@@ -200,8 +202,10 @@ def _write_offline_newtab_extension(
     ext_dir.mkdir(parents=True, exist_ok=True)
     icons_dir = ext_dir / "icons"
     icons_dir.mkdir(parents=True, exist_ok=True)
+    from .luminara_logo3d import get_logo_icon_png
+
     for px in (16, 48, 128):
-        (icons_dir / f"icon{px}.png").write_bytes(make_solid_emerald_png(px))
+        (icons_dir / f"icon{px}.png").write_bytes(get_logo_icon_png(px) or make_solid_emerald_png(px))
 
     ntp_clean, ntp_js = _extract_inline_script_for_mv3(newtab_html, "newtab.js")
     ws_clean, ws_js = _extract_inline_script_for_mv3(workspace_html, "workspace.js")

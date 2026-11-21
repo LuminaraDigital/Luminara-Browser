@@ -25,11 +25,17 @@ def _daemon_url() -> str:
 
 
 def _discover_newest_local_ui_key() -> str:
-    candidates: list[Path] = []
     env_forge = (os.environ.get("LUMINARA_FORGE_ROOT") or "").strip()
     if env_forge:
-        candidates.append(Path(env_forge).expanduser() / "outputs" / "local_ui_key.txt")
-    candidates.append(Path.home() / ".luminara-browser" / "local_ui_key.txt")
+        explicit = Path(env_forge).expanduser() / "outputs" / "local_ui_key.txt"
+        if explicit.is_file():
+            try:
+                val = explicit.read_text(encoding=ENCODING).strip()
+                if val:
+                    return val
+            except OSError:
+                pass
+    candidates: list[Path] = [Path.home() / ".luminara-browser" / "local_ui_key.txt"]
     cwd = Path.cwd()
     for base in (cwd, cwd / "chromium-forge", cwd / "Agent", Path(__file__).resolve().parents[3] / "chromium-forge"):
         if (base / "fork.json").is_file():
@@ -83,9 +89,13 @@ def _resolve_secret_safe_text(inline: str, env_var: str | None, use_stdin: bool)
 
 
 def main(argv: list[str] | None = None) -> int:
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--human-auth", action="store_true", default=argparse.SUPPRESS, help="Authorize human-only security overrides using local_ui_key.txt")
     p = argparse.ArgumentParser(prog="luminara_ctl", description="Control Luminara Browser v3.1.0 (28 MCP v2 tools)")
-    p.add_argument("--human-auth", action="store_true", help="Authorize human-only security overrides using local_ui_key.txt")
+    p.add_argument("--human-auth", action="store_true", default=False, help="Authorize human-only security overrides using local_ui_key.txt")
     sub = p.add_subparsers(dest="cmd", required=True)
+    _orig_add = sub.add_parser
+    sub.add_parser = lambda *a, **kw: _orig_add(*a, parents=[common, *kw.pop("parents", [])], **kw)  # type: ignore[method-assign]
 
     sub.add_parser("status", help="Show daemon health, CDP mux state, vault encryption, active handoffs, and recent LUM-* receipts")
     sub.add_parser("tabs", help="List open shared browser tabs and active leases (browser_list_tabs)")
@@ -289,7 +299,7 @@ def main(argv: list[str] | None = None) -> int:
     p_evl.add_argument("--suite", default="extraction")
     p_evl.add_argument("--providers", default="", help="Comma-separated provider list")
     p_evl.add_argument("--endpoint", default="")
-    p_evl.add_argument("--wire-json", default="{}")
+    p_evl.add_argument("--wire-json", "--payload-json", dest="wire_json", default="{}")
 
     args = p.parse_args(argv)
 

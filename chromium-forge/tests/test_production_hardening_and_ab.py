@@ -409,6 +409,21 @@ class TestProductionHardeningAndAB(unittest.TestCase):
                 srv.server_close()
                 terminate_browser_process(proc)
 
+    def test_3d_animated_startup_logo_and_icons(self) -> None:
+        from forge.luminara_logo3d import get_logo_data_uri, get_logo_icon_png
+        from forge.luminara_ui import build_luminara_newtab_html
+
+        uri = get_logo_data_uri()
+        self.assertTrue(uri.startswith("data:image/"), "Embedded 3D logo data URI missing")
+        for px in (16, 48, 128):
+            png = get_logo_icon_png(px)
+            self.assertIsNotNone(png)
+            self.assertTrue(png.startswith(b"\x89PNG\r\n\x1a\n"))  # type: ignore[union-attr]
+        nt_html = build_luminara_newtab_html(ForkProfile())
+        for token in ("id=\"luminaraSplash\"", "id=\"splashLogoCanvas\"", "id=\"heroLogoCanvas\"", "createLuminara3DLogo", "__luminaraSplashNotifyDaemon"):
+            self.assertIn(token, nt_html)
+        self.assertNotIn(".innerHTML", nt_html)
+
 
 if __name__ == "__main__":
     unittest.main()

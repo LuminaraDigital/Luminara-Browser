@@ -22,4 +22,4 @@ package-dir = {"" = "chromium-forge"}
 packages = ["forge"]
 
 [tool.setuptools.package-data]
-forge = ["ui/*.html", "patches/luminara/*", "rea_evidence/*.json"]
+forge = ["ui/*.html", "ui/*.png", "ui/*.webp", "patches/luminara/*", "rea_evidence/*.json"]

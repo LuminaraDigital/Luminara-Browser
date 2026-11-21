@@ -222,7 +222,7 @@ class TestPerplexityREASuiteV31(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     mgr.capture_baseline("../escape", png_bytes=encode_rgba_png(2, 2, b"\x00" * 16))
                 mgr.lock_origins("tab-vrt", ["https://app.trusted.example:443"])
-                fw.enable_guard("tab-vrt")
+                fw.enable_guard("tab-vrt", url_pattern="https://app.trusted.example/api/checkout*")
                 session_cmds.clear()
 
                 # Allowed GET passes both hooks -> single Fetch.continueRequest
@@ -233,6 +233,14 @@ class TestPerplexityREASuiteV31(unittest.TestCase):
                         "params": {"requestId": "r-ok", "request": {"method": "GET", "url": "https://app.trusted.example/main.js"}},
                     }
                 )
+                # Declared POST outside MutationFirewall url_pattern passes through (not falsely paused!)
+                bridge._on_mux_fetch_paused(
+                    {
+                        "target_id": "tab-vrt",
+                        "session_id": "sess-1",
+                        "params": {"requestId": "r-ping", "request": {"method": "POST", "url": "https://app.trusted.example/api/ping"}},
+                    }
+                )
                 # Undeclared GET blocked by VRT (priority 10) -> Fetch.failRequest (never continueRequest!)
                 bridge._on_mux_fetch_paused(
                     {
@@ -241,7 +249,7 @@ class TestPerplexityREASuiteV31(unittest.TestCase):
                         "params": {"requestId": "r-bad", "request": {"method": "GET", "url": "https://ads.untrusted.example/beacon"}},
                     }
                 )
-                # Declared high-risk POST paused by MutationFirewall (priority 20) -> neither fail nor continue
+                # Declared high-risk POST matching url_pattern paused by MutationFirewall (priority 20)
                 bridge._on_mux_fetch_paused(
                     {
                         "target_id": "tab-vrt",
@@ -250,6 +258,7 @@ class TestPerplexityREASuiteV31(unittest.TestCase):
                     }
                 )
                 self.assertIn(("Fetch.continueRequest", {"requestId": "r-ok"}), sent_mux)
+                self.assertIn(("Fetch.continueRequest", {"requestId": "r-ping"}), sent_mux)
                 self.assertIn(("Fetch.failRequest", {"requestId": "r-bad", "errorReason": "BlockedByClient"}), sent_mux)
                 self.assertNotIn(("Fetch.continueRequest", {"requestId": "r-bad"}), sent_mux)
                 self.assertNotIn(("Fetch.continueRequest", {"requestId": "r-mut"}), sent_mux)
@@ -300,7 +309,7 @@ class TestPerplexityREASuiteV31(unittest.TestCase):
             self.assertIsNotNone(disk_pb)
             self.assertEqual(disk_pb["steps"], [{"action": "click", "index": 1}])  # type: ignore[index]
 
-            # Selector-scoped monitor diff + webhook dispatch on CHANGED
+            # Nested same-tag + prefix-ID selector-scoped monitor diff + webhook dispatch on CHANGED
             mon = eng.create_monitor(
                 name="Price Watch",
                 target_url="https://shop.example/p",
@@ -310,19 +319,19 @@ class TestPerplexityREASuiteV31(unittest.TestCase):
             dispatched: list[tuple[str, dict[str, object]]] = []
             m1 = eng.run_monitor(
                 mon["monitor_id"],
-                injected_html='<div id="banner">Ad v1</div><div id="price">$19</div>',
+                injected_html='<div id="price-banner">Ad v1</div><div id="price"><div class="lbl">Now</div><div class="val">$19</div></div>',
             )
             self.assertEqual(m1["status"], "INITIALIZED")
-            # Change outside #price selector -> UNCHANGED
+            # Change outside #price (including prefix-similar #price-banner!) -> UNCHANGED
             m2 = eng.run_monitor(
                 mon["monitor_id"],
-                injected_html='<div id="banner">Ad v2</div><div id="price">$19</div>',
+                injected_html='<div id="price-banner">Ad v2</div><div id="price"><div class="lbl">Now</div><div class="val">$19</div></div>',
             )
             self.assertEqual(m2["status"], "UNCHANGED")
-            # Change inside #price selector -> CHANGED + webhook invoked
+            # Change inside nested <div> of #price -> CHANGED + webhook invoked
             m3 = eng.run_monitor(
                 mon["monitor_id"],
-                injected_html='<div id="banner">Ad v2</div><div id="price">$15</div>',
+                injected_html='<div id="price-banner">Ad v2</div><div id="price"><div class="lbl">Now</div><div class="val">$15</div></div>',
                 webhook_sender=lambda u, p: dispatched.append((u, p)) or {"dispatched": True},
             )
             self.assertEqual(m3["status"], "CHANGED")
@@ -418,9 +427,23 @@ class TestPerplexityREASuiteV31(unittest.TestCase):
                     urllib.request.urlopen(bad_tok_req, timeout=5.0)
                 self.assertEqual(ctx_403.exception.code, 403)
 
-                # 4. Trigger PAUSED_SEQUENCE_BLOCK on agent a1 -> verify agent_id rotation to spoof-a2 is STILL blocked!
+                # 3b. Clean-state Casebundle export + non-mutating GET download (must succeed with HTTP 200 & matching manifest_sha256!)
+                clean_exp = json.loads(_mcp("tools/call", {"name": "browser_sequence_guard", "arguments": {"action": "export_casebundle"}})["result"]["content"][0]["text"])  # type: ignore[index]
+                with urllib.request.urlopen(f"{base}/api/agent/casebundles?name={clean_exp['bundle_file']}", timeout=5.0) as dl_clean:
+                    clean_zip_bytes = dl_clean.read()
+                self.assertEqual(clean_zip_bytes[:2], b"PK")
+                with zipfile.ZipFile(__import__("io").BytesIO(clean_zip_bytes)) as zf_chk:
+                    self.assertEqual(json.loads(zf_chk.read("manifest.json"))["case_id"], clean_exp["case_id"])
+
+                # 4. Trigger PAUSED_SEQUENCE_BLOCK via multi-URL browser_bulk_extract urls[1:] -> verify agent_id rotation is blocked!
                 _mcp("tools/call", {"name": "browser_vault", "arguments": {"action": "fill", "origin": "https://bank.example", "agent_id": "a1"}})
-                blk1 = _mcp("tools/call", {"name": "browser_open_tab", "arguments": {"url": "https://evil.example/drop", "agent_id": "a1"}})
+                blk1 = _mcp(
+                    "tools/call",
+                    {
+                        "name": "browser_bulk_extract",
+                        "arguments": {"urls": ["https://bank.example/home", "https://evil.example/drop"], "agent_id": "a1"},
+                    },
+                )
                 blk1_payload = json.loads(blk1["result"]["content"][0]["text"])  # type: ignore[index]
                 self.assertEqual(blk1_payload["status"], "PAUSED_SEQUENCE_BLOCK")
 
@@ -430,11 +453,14 @@ class TestPerplexityREASuiteV31(unittest.TestCase):
 
                 # Export signed casebundle & download via GET /api/agent/casebundles + verify by bare filename
                 exp_mcp = _mcp("tools/call", {"name": "browser_sequence_guard", "arguments": {"action": "export_casebundle"}})
-                bname = Path(json.loads(exp_mcp["result"]["content"][0]["text"])["bundle_path"]).name  # type: ignore[index]
+                exp_json = json.loads(exp_mcp["result"]["content"][0]["text"])  # type: ignore[index]
+                bname = Path(exp_json["bundle_path"]).name
                 with urllib.request.urlopen(f"{base}/api/agent/casebundles?name={bname}", timeout=5.0) as dl_resp:
                     self.assertEqual(dl_resp.read(2), b"PK")
                 ver_mcp = _mcp("tools/call", {"name": "browser_sequence_guard", "arguments": {"action": "verify_casebundle", "bundle_path": bname}})
-                self.assertTrue(json.loads(ver_mcp["result"]["content"][0]["text"])["valid"])  # type: ignore[index]
+                ver_json = json.loads(ver_mcp["result"]["content"][0]["text"])  # type: ignore[index]
+                self.assertTrue(ver_json["valid"])
+                self.assertEqual(ver_json["manifest_sha256"], exp_json["manifest_sha256"])
 
                 # Human UI key guard on clear_block (rejects unkeyed, allows keyed)
                 unauth = _mcp("tools/call", {"name": "browser_sequence_guard", "arguments": {"action": "clear_block"}})
@@ -451,7 +477,7 @@ class TestPerplexityREASuiteV31(unittest.TestCase):
                 write_copilot_extension(ext_out, ForkProfile(), ui_key="")
                 self.assertIn('const UI_KEY = "";', (ext_out / "sidepanel.js").read_text(encoding="utf-8"))
 
-                # 6. Verify luminara_ctl.py CLI subcommands & non-zero exit code on valid=False
+                # 6. Verify luminara_ctl.py CLI subcommands, trailing --human-auth & exact exit 1 on valid=False
                 ctl = str((REPO_ROOT / "skills" / "luminara-browser" / "scripts" / "luminara_ctl.py").resolve())
                 env = {
                     **dict(__import__("os").environ),
@@ -459,7 +485,7 @@ class TestPerplexityREASuiteV31(unittest.TestCase):
                     "LUMINARA_UI_KEY": rt.local_ui_key,
                 }
                 for cmd_args in (
-                    ["sequences", "--action", "status"],
+                    ["sequences", "--action", "status", "--human-auth"],
                     ["monitors", "--action", "create", "--name", "CLI Watch", "--target-url", "https://example.org"],
                     ["eval", "--action", "run_suite", "--providers", "luminara,perplexity"],
                 ):
@@ -483,7 +509,7 @@ class TestPerplexityREASuiteV31(unittest.TestCase):
                     timeout=10.0,
                     check=False,
                 )
-                self.assertNotEqual(bad_wire.returncode, 0)
+                self.assertEqual(bad_wire.returncode, 1)
 
                 with urllib.request.urlopen(f"{base}/api/agent/status", timeout=5.0) as st_resp:
                     st_json = json.loads(st_resp.read().decode("utf-8"))

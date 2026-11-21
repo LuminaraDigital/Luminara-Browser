@@ -82,7 +82,7 @@ def build_palette_js(search_url: str, agent_port: int = 8796) -> str:
       if (location.protocol === 'file:' && location.pathname.includes('luminara_pages/')) {{
         window.open('./' + file, '_blank');
       }} else if (/^https?:$/i.test(location.protocol) && /^(127\\.0\\.0\\.1|localhost|\\[::1\\])$/i.test(location.hostname)) {{
-        window.open(location.origin + fallbackPath, '_blank');
+        window.open(location.protocol + '//' + location.hostname + ':{agent_port}' + fallbackPath, '_blank');
       }} else {{
         window.open('http://127.0.0.1:{agent_port}' + fallbackPath, '_blank');
       }}

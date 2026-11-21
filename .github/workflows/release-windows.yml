@@ -54,18 +54,18 @@ jobs:
           python -m forge build-portable --release
           Compress-Archive -Path "dist/luminara-browser-win64/*" -DestinationPath "dist/Luminara-Browser-win64-portable.zip" -Force
           @'
-import sys, zipfile
-z = zipfile.ZipFile("dist/Luminara-Browser-win64-portable.zip")
-toks = ("local_ui_key.txt", "action_ledger.jsonl", "vault.json", "vault.key.json", ".sqlite3", "scheduled_tasks.json", "sequence_guard_state.json", "casebundles/")
-bad = [n for n in z.namelist() if any(t in n for t in toks)]
-sp = [n for n in z.namelist() if n.endswith("luminara-copilot/sidepanel.js")]
-sp_src = z.read(sp[0]).decode("utf-8") if sp else ""
-if bad:
-    sys.exit("Secret leaked in zip: " + str(bad))
-if 'const UI_KEY = "";' not in sp_src:
-    sys.exit("UI_KEY leaked or missing in sidepanel.js")
-print("Release zip secret & UI_KEY scrub verified:", len(z.namelist()), "entries")
-'@ | python -
+          import sys, zipfile
+          z = zipfile.ZipFile("dist/Luminara-Browser-win64-portable.zip")
+          toks = ("local_ui_key.txt", "action_ledger.jsonl", "vault.json", "vault.key.json", ".sqlite3", "scheduled_tasks.json", "sequence_guard_state.json", "casebundles/")
+          bad = [n for n in z.namelist() if any(t in n for t in toks)]
+          sp = [n for n in z.namelist() if n.endswith("luminara-copilot/sidepanel.js")]
+          sp_src = z.read(sp[0]).decode("utf-8") if sp else ""
+          if bad:
+              sys.exit("Secret leaked in zip: " + str(bad))
+          if 'const UI_KEY = "";' not in sp_src:
+              sys.exit("UI_KEY leaked or missing in sidepanel.js")
+          print("Release zip secret & UI_KEY scrub verified:", len(z.namelist()), "entries")
+          '@ | python -
           $hash = (Get-FileHash -LiteralPath "dist/Luminara-Browser-win64-portable.zip" -Algorithm SHA256).Hash.ToLower()
           [System.IO.File]::WriteAllText((Join-Path (Get-Location) "dist/SHA256SUMS.txt"), "$hash  Luminara-Browser-win64-portable.zip`n", [System.Text.UTF8Encoding]::new($false))
           python -m forge sign-manifest --artifact-name Luminara-Browser-win64-portable.zip --artifact-sha256 $hash --out dist/release-manifest.json

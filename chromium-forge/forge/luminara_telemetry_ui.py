@@ -162,6 +162,8 @@ def build_telemetry_cockpit_js() -> str:
           revisions,
           evalReport: evalD
         };
+        const ab = document.getElementById('wsAuthBar');
+        if (ab) ab.classList.remove('visible');
       } catch (err) {
         if (err && err.name === 'AbortError') {
           teleError = 'Evaluation cancelled by user — click Refresh Cockpit to reload.';
@@ -304,7 +306,7 @@ def build_telemetry_cockpit_js() -> str:
       leftPane.appendChild(monForm);
 
       const mons = (teleSnapshot && teleSnapshot.monitors) || [];
-      if (!mons.length && !teleLoading) {
+      if (teleSnapshot && !mons.length && !teleLoading) {
         leftPane.appendChild(el('div', 'status-line', 'No Web Monitors configured yet — add a URL above to track SHA-256 structural diffs with fenced lease_epoch protection.'));
       } else if (mons.length) {
         const mWrap = el('div', 'table-wrap');
@@ -375,6 +377,16 @@ def build_telemetry_cockpit_js() -> str:
       revBox.appendChild(el('div', 'tele-kicker', 'CAS Playbook Revisions & 1-Click Rollback'));
       const pbInputWrap = makeLabeledInput('telePlaybookId', 'Playbook ID', selectedPlaybookId || 'pb_example');
       pbInputWrap.inp.value = selectedPlaybookId;
+      pbInputWrap.inp.setAttribute('list', 'telePlaybookList');
+      const pbDatalist = document.createElement('datalist');
+      pbDatalist.id = 'telePlaybookList';
+      ((teleSnapshot && teleSnapshot.playbooks) || []).forEach(pb => {
+        const opt = document.createElement('option');
+        opt.value = pb.playbook_id;
+        opt.label = (pb.domain || 'local') + ' — ' + (pb.goal_example || pb.playbook_id);
+        pbDatalist.appendChild(opt);
+      });
+      pbInputWrap.wrap.appendChild(pbDatalist);
       pbInputWrap.err.remove();
       const pbBtnRow = el('div', '');
       pbBtnRow.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;';
@@ -393,7 +405,7 @@ def build_telemetry_cockpit_js() -> str:
         try {
           selectedPlaybookId = pid;
           const curRevs = (teleSnapshot && teleSnapshot.revisions) || [];
-          const expRev = curRevs.length ? curRevs[0].revision_id : undefined;
+          const expRev = (curRevs.length && curRevs[0].playbook_id === pid) ? curRevs[0].revision_id : undefined;
           const d = await telePost('/api/agent/monitors', { action: 'snapshot_revision', playbook_id: pid, expected_revision: expRev });
           setWsToast('Snapshotted ' + pid + ' @ ' + d.latest_revision + '.');
           await fetchTelemetryBundle(false);
@@ -495,18 +507,18 @@ def build_telemetry_cockpit_js() -> str:
           expBundleBtn.disabled = true;
           try {
             const d = await telePost('/api/agent/sequences', { action: 'export_casebundle' });
-            const dlResp = await fetch(DAEMON + '/api/agent/casebundles?case_id=' + encodeURIComponent(d.case_id), { headers: apiHeaders(false) });
-            if (dlResp.ok) {
-              const blob = await dlResp.blob();
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = d.bundle_file || (d.case_id + '.zip');
-              a.click();
-              setTimeout(() => URL.revokeObjectURL(url), 1000);
-            }
+            const fname = d.bundle_file || (d.case_id + '.zip');
+            const dlResp = await fetch(DAEMON + '/api/agent/casebundles?name=' + encodeURIComponent(fname), { headers: apiHeaders(false) });
+            if (!dlResp.ok) throw new Error('Casebundle download HTTP ' + dlResp.status);
+            const blob = await dlResp.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fname;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
             const verInput = document.getElementById('teleVerifyBundleName');
-            if (verInput) verInput.value = d.bundle_file || (d.case_id + '.zip');
+            if (verInput) verInput.value = fname;
             setWsToast('Exported signed casebundle ' + d.case_id + ' (' + d.manifest_sha256.slice(0, 12) + ').');
           } catch (err) {
             setWsToast('Casebundle export error: ' + (err.message || String(err)), true);

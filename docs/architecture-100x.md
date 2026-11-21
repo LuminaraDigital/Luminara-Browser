@@ -10,7 +10,7 @@ flowchart TB
         CloudCI["16-Stage Checkpointed x64/arm64 PGO+ThinLTO Workflow"]
     end
 
-    subgraph Runtime["Phase 1–4: Luminara v3.0 Agentic & Privacy Kernel (:8796)"]
+    subgraph Runtime["Phase 1–4: Luminara v3.1.0 Agentic & Privacy Kernel (:8796)"]
         Crypto["luminara_crypto.py (Windows DPAPI + PBKDF2 AEAD + Ephemeral HMAC)"]
         Mux["cdp_mux.py (Single Browser WS + Flat Sessions + Event Ring Buffer)"]
         AX["perception.py (Blink AXTree + Shadow-DOM + OOPIF + Hardware Input)"]

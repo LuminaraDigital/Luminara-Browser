@@ -31,7 +31,7 @@ from .extractor import (
     format_extracted_rows,
     synthesize_generative_ui,
 )
-from .http_base import LoopbackHTTPServer, LoopbackJSONHandler, atomic_write_private, ensure_local_ui_key
+from .http_base import LoopbackHTTPServer, LoopbackJSONHandler, atomic_write_private, ensure_local_ui_key, safe_join
 from .knowledge_graph import KnowledgeWorkspaceStore, TabLifecycleManager
 from .luminara_automation import PipelineSandboxRunner, PlaybookMemory
 from .luminara_crypto import EphemeralSessionSigner
@@ -217,6 +217,12 @@ class LuminaraAgentRuntime:
                 for entry in self.vault.list_entries():
                     if entry.get("vault_id") == vid and entry.get("origin"):
                         return str(entry["origin"])
+        if name == "browser_monitors" and str(args.get("action") or "").strip().lower() == "run_now":
+            mid = str(args.get("monitor_id") or "").strip()
+            if mid:
+                for m in self.monitors_eval.list_monitors():
+                    if m.get("monitor_id") == mid and m.get("target_url"):
+                        return str(m["target_url"])
         if name in (
             "browser_snapshot",
             "browser_perception_axtree",
@@ -228,6 +234,9 @@ class LuminaraAgentRuntime:
             "browser_outline",
             "browser_dialog",
             "browser_vault",
+            "browser_run_goal",
+            "browser_playbooks",
+            "browser_exec_pipeline",
         ):
             return self._active_tab_url(args.get("target_id"))
         return ""
@@ -256,23 +265,32 @@ class LuminaraAgentRuntime:
                     "findings": [latched],
                     "receipt": rec,
                 }
-            seq_chk = self.sequence_guard.evaluate_step(
-                agent_id=agent_id,
-                tool_name=name,
-                params=args,
-                target_url=self._resolve_sequence_url(name, args),
-                workspace_id=str(args.get("workspace_id") or "default"),
+            seq_urls = (
+                [str(u).strip() for u in args["urls"] if isinstance(u, str) and u.strip()]
+                if (name == "browser_bulk_extract" and isinstance(args.get("urls"), list))
+                else []
             )
-            if seq_chk.get("blocked"):
-                rec = self.ledger.record(
-                    agent_id,
-                    "sequence_block",
-                    str(args.get("target_id") or ""),
-                    {"blocked_tool": name, "status": "PAUSED_SEQUENCE_BLOCK"},
-                    status="BLOCKED",
-                    summary=f"SequenceGuard blocked {name} (PAUSED_SEQUENCE_BLOCK)",
+            if not seq_urls:
+                seq_urls = [self._resolve_sequence_url(name, args)]
+            for eval_u in seq_urls:
+                step_params = {**args, "url": eval_u} if (len(seq_urls) > 1 and eval_u) else args
+                seq_chk = self.sequence_guard.evaluate_step(
+                    agent_id=agent_id,
+                    tool_name=name,
+                    params=step_params,
+                    target_url=eval_u,
+                    workspace_id=str(args.get("workspace_id") or "default"),
                 )
-                return {**seq_chk, "receipt": rec}
+                if seq_chk.get("blocked"):
+                    rec = self.ledger.record(
+                        agent_id,
+                        "sequence_block",
+                        str(args.get("target_id") or ""),
+                        {"blocked_tool": name, "status": "PAUSED_SEQUENCE_BLOCK"},
+                        status="BLOCKED",
+                        summary=f"SequenceGuard blocked {name} (PAUSED_SEQUENCE_BLOCK)",
+                    )
+                    return {**seq_chk, "receipt": rec}
         if name == "browser_list_tabs":
             connected = self.cdp.is_alive()
             tabs = self.cdp.list_tabs() if connected else []
@@ -698,7 +716,7 @@ def create_agent_http_server(
                     "/api/agent/schedules": ("browser_schedule", {"action": "list"}),
                     "/api/agent/sequences": ("browser_sequence_guard", {"action": "status"}),
                     "/api/agent/vrt": ("browser_vrt_isolation", {"action": "status"}),
-                    "/api/agent/monitors": ("browser_monitors", {"action": "list"}),
+                    "/api/agent/monitors": ("browser_monitors", {"action": "list", "workspace_id": (qs.get("workspace_id") or [None])[0]}),
                     "/api/agent/eval": ("browser_search_eval", {"action": "scorecard"}),
                 }
                 if path in simple_get_tools:
@@ -707,9 +725,24 @@ def create_agent_http_server(
                     return
 
                 if path == "/api/agent/casebundles":
+                    raw_name = (qs.get("name") or qs.get("bundle_file") or [None])[0]
                     case_id = (qs.get("case_id") or [None])[0]
-                    exp = runtime.sequence_guard.export_casebundle(case_id=case_id)
-                    zpath = Path(str(exp["bundle_path"])).resolve()
+                    if raw_name:
+                        zpath = safe_join(runtime.sequence_guard.casebundles_dir, Path(str(raw_name)).name)
+                        if not zpath.is_file():
+                            self.send_json({"error": f"Casebundle not found: {raw_name}"}, status=404)
+                            return
+                    else:
+                        zpath = None
+                        if case_id:
+                            slug = "".join(ch for ch in str(case_id) if ch.isalnum() or ch in ("-", "_", "."))
+                            cand_name = slug if slug.endswith(".zip") else f"{slug}.zip"
+                            cand = safe_join(runtime.sequence_guard.casebundles_dir, cand_name)
+                            if cand.is_file():
+                                zpath = cand
+                        if zpath is None:
+                            exp = runtime.sequence_guard.export_casebundle(case_id=case_id)
+                            zpath = Path(str(exp["bundle_path"])).resolve()
                     self.send_bytes(zpath.read_bytes(), content_type="application/zip", filename=zpath.name)
                     return
 
