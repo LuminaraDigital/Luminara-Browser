@@ -18,6 +18,7 @@ from .luminara_copilot_ext import (
     make_solid_emerald_png,
     write_copilot_extension,
 )
+from .luminara_logo3d import get_logo_favicon_data_uri
 from .luminara_telemetry_ui import build_telemetry_cockpit_css, build_telemetry_cockpit_js
 from .models import ForkProfile
 
@@ -36,6 +37,7 @@ def build_luminara_workspace_html(
     palette_iife = build_palette_js(profile.resolved_search_engine().search_url, agent_port=agent_port)
     tele_css = build_telemetry_cockpit_css()
     tele_js = build_telemetry_cockpit_js()
+    favicon_uri = get_logo_favicon_data_uri()
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -43,6 +45,7 @@ def build_luminara_workspace_html(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark light" />
+  <link rel="icon" type="image/png" href="{favicon_uri}" />
   <title>{brand_esc} — Generative UI Workspace</title>
   <style>
     :root {{

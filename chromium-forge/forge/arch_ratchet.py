@@ -213,7 +213,7 @@ def run_architecture_ratchet(
 
     for mod_name, fpath in py_files.items():
         src = fpath.read_text(encoding=ENCODING)
-        if mod_name in ("luminara_ui", "luminara_workspace_ui", "luminara_telemetry_ui", "luminara_copilot_ext"):
+        if mod_name in ("luminara_ui", "luminara_workspace_ui", "luminara_telemetry_ui", "luminara_copilot_ext", "luminara_logo3d"):
             if _INNER_HTML_ASSIGN_RE.search(src):
                 xss_violations.append(f"forge/{fpath.name}")
         tree = ast.parse(src, filename=str(fpath))

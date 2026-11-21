@@ -89,12 +89,9 @@ def _build_initial_preferences(profile: ForkProfile, ntp_url: str) -> dict[str, 
 def _write_shield_extension(ext_dir: Path, profile: ForkProfile) -> None:
     """Create MV3 Privacy Shield v3 extension (DNR tracker/query-param scrubber + deterministic farbling + WebMCP)."""
     ext_dir.mkdir(parents=True, exist_ok=True)
-    icons_dir = ext_dir / "icons"
-    icons_dir.mkdir(parents=True, exist_ok=True)
-    from .luminara_logo3d import get_logo_icon_png
+    from .luminara_logo3d import write_extension_icons
 
-    for px in (16, 48, 128):
-        (icons_dir / f"icon{px}.png").write_bytes(get_logo_icon_png(px) or make_solid_emerald_png(px))
+    write_extension_icons(ext_dir)
 
     rules = compile_dnr_shield_rules(profile)
     (ext_dir / "rules.json").write_text(json.dumps(rules, indent=2) + "\n", encoding=ENCODING, newline="\n")
@@ -200,12 +197,9 @@ def _write_offline_newtab_extension(
 ) -> None:
     """Create `< 8 ms` offline-first MV3 New Tab Override (`chrome_url_overrides.newtab`) + Alt+K Command Palette."""
     ext_dir.mkdir(parents=True, exist_ok=True)
-    icons_dir = ext_dir / "icons"
-    icons_dir.mkdir(parents=True, exist_ok=True)
-    from .luminara_logo3d import get_logo_icon_png
+    from .luminara_logo3d import write_extension_icons
 
-    for px in (16, 48, 128):
-        (icons_dir / f"icon{px}.png").write_bytes(get_logo_icon_png(px) or make_solid_emerald_png(px))
+    write_extension_icons(ext_dir)
 
     ntp_clean, ntp_js = _extract_inline_script_for_mv3(newtab_html, "newtab.js")
     ws_clean, ws_js = _extract_inline_script_for_mv3(workspace_html, "workspace.js")
@@ -233,6 +227,7 @@ def _write_offline_newtab_extension(
         "description": "Zero-cold-start offline-first New Tab Command Deck + Alt+K / Ctrl+Shift+K Command Palette.",
         "chrome_url_overrides": {"newtab": "newtab.html"},
         "background": {"service_worker": "newtab_bg.js"},
+        "permissions": ["storage"],
         "host_permissions": [f"http://127.0.0.1:{profile.agent_port}/*"],
         "icons": {"16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png"},
         "content_security_policy": {
@@ -303,7 +298,7 @@ def _bundle_portable_agent_runtime(
     dst_pkg = agent_dir / "forge"
     if dst_pkg.exists():
         shutil.rmtree(dst_pkg)
-    shutil.copytree(src_pkg, dst_pkg, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copytree(src_pkg, dst_pkg, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "luminara-logo.png"))
     profile.save(agent_dir / "fork.json")
     out_dir = agent_dir / "outputs"
     if release_scrub and out_dir.exists():

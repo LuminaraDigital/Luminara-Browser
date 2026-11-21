@@ -178,10 +178,9 @@ def write_copilot_extension(
                 except Exception:  # noqa: BLE001
                     pass
                 break
-    icons_dir = ext_dir / "icons"
-    icons_dir.mkdir(parents=True, exist_ok=True)
-    for px in (16, 48, 128):
-        (icons_dir / f"icon{px}.png").write_bytes(make_solid_emerald_png(px))
+    from .luminara_logo3d import write_extension_icons
+
+    write_extension_icons(ext_dir)
 
     daemon_base = f"http://127.0.0.1:{agent_port}"
     resolved_ws_url = workspace_uri if workspace_uri.startswith("http") else f"{daemon_base}/workspace"
@@ -223,6 +222,7 @@ chrome.runtime.onStartup.addListener(enableSidePanelOnClick);
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark light" />
+  <link rel="icon" type="image/png" href="icons/icon48.png" />
   <title>{html.escape(profile.brand_name)} Copilot</title>
   <style>
     :root {{

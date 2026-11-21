@@ -363,17 +363,47 @@ class TestProductionHardeningAndAB(unittest.TestCase):
                     wait_for_cdp_page_ready(rt.cdp, "typeof syncDaemon === 'function'", timeout=20.0),
                     "newtab.html script failed to execute",
                 )
-                time.sleep(0.35)
+                time.sleep(0.50)
                 nt_state = rt.cdp.evaluate_js(
                     None,
                     """(() => {
+                        const splash = document.getElementById('luminaraSplash');
+                        const track = document.getElementById('splashProgressTrack');
+                        const progressBefore = Number(track ? track.getAttribute('aria-valuenow') : 0);
+                        const pulseBtn = document.getElementById('btnPulseLogo');
+                        pulseBtn.focus();
+                        pulseBtn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+                        const stillOpenAfterBtnEnter = !splash.classList.contains('hidden');
+                        window.__luminaraLogo3D.closeSplash();
+                        const closedOk = splash.classList.contains('hidden');
+                        window.__luminaraLogo3D.openSplash();
+                        const reopenedOk = !splash.classList.contains('hidden');
+                        const canvas = document.getElementById('splashLogoCanvas');
+                        const canvasBounded = canvas.width >= 64 && canvas.width <= 1024;
+                        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+                        const closedOnEsc = splash.classList.contains('hidden');
                         document.getElementById('todoInput').value = 'Live QA Task';
                         document.getElementById('todoForm').dispatchEvent(new Event('submit', {cancelable: true}));
                         const todos = JSON.parse(localStorage.getItem('luminara_browser:todos') || '[]');
-                        return { todoCount: todos.length, firstTodo: todos[0] ? todos[0].text : '' };
+                        return {
+                            todoCount: todos.length,
+                            firstTodo: todos[0] ? todos[0].text : '',
+                            progressBefore,
+                            stillOpenAfterBtnEnter,
+                            closedOk,
+                            reopenedOk,
+                            canvasBounded,
+                            closedOnEsc,
+                        };
                     })()""",
                 )
                 self.assertEqual(nt_state["firstTodo"], "Live QA Task")
+                self.assertEqual(nt_state["progressBefore"], 100)
+                self.assertTrue(nt_state["stillOpenAfterBtnEnter"])
+                self.assertTrue(nt_state["closedOk"])
+                self.assertTrue(nt_state["reopenedOk"])
+                self.assertTrue(nt_state["canvasBounded"])
+                self.assertTrue(nt_state["closedOnEsc"])
 
                 rt.cdp.navigate(None, f"http://127.0.0.1:{ag_port}/workspace", settle_sec=0.4)
                 self.assertTrue(
@@ -410,19 +440,52 @@ class TestProductionHardeningAndAB(unittest.TestCase):
                 terminate_browser_process(proc)
 
     def test_3d_animated_startup_logo_and_icons(self) -> None:
-        from forge.luminara_logo3d import get_logo_data_uri, get_logo_icon_png
-        from forge.luminara_ui import build_luminara_newtab_html
+        from forge.luminara_logo3d import get_logo_data_uri, get_logo_favicon_data_uri, get_logo_icon_png
+        from forge.luminara_ui import build_luminara_newtab_html, build_luminara_workspace_html, write_copilot_extension
+        from forge.portable import _write_offline_newtab_extension, _write_shield_extension
 
         uri = get_logo_data_uri()
         self.assertTrue(uri.startswith("data:image/"), "Embedded 3D logo data URI missing")
+        self.assertTrue(get_logo_favicon_data_uri().startswith("data:image/png;base64,"))
         for px in (16, 48, 128):
             png = get_logo_icon_png(px)
             self.assertIsNotNone(png)
             self.assertTrue(png.startswith(b"\x89PNG\r\n\x1a\n"))  # type: ignore[union-attr]
-        nt_html = build_luminara_newtab_html(ForkProfile())
-        for token in ("id=\"luminaraSplash\"", "id=\"splashLogoCanvas\"", "id=\"heroLogoCanvas\"", "createLuminara3DLogo", "__luminaraSplashNotifyDaemon"):
+
+        prof = ForkProfile()
+        nt_html = build_luminara_newtab_html(prof)
+        ws_html = build_luminara_workspace_html(prof)
+        for token in (
+            'id="luminaraSplash"',
+            'id="splashLogoCanvas"',
+            'id="heroLogoCanvas"',
+            "createLuminara3DLogo",
+            "__luminaraSplashNotifyDaemon",
+            "chrome.storage.session",
+            "webglcontextlost",
+            'rel="icon"',
+        ):
             self.assertIn(token, nt_html)
+        self.assertIn('rel="icon"', ws_html)
         self.assertNotIn(".innerHTML", nt_html)
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            w = Path(tmp)
+            nt_dir, sh_dir, cp_dir = w / "newtab", w / "shield", w / "copilot"
+            _write_offline_newtab_extension(nt_dir, prof, nt_html, ws_html)
+            _write_shield_extension(sh_dir, prof)
+            write_copilot_extension(cp_dir, prof)
+            expected_128 = get_logo_icon_png(128)
+            for ext in (nt_dir, sh_dir, cp_dir):
+                self.assertEqual((ext / "icons" / "icon128.png").read_bytes(), expected_128)
+            manifest = json.loads((nt_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertIn("storage", manifest.get("permissions", []))
+
+        cf_pub = STUDIO_ROOT / "cloudflare" / "public"
+        for asset in ("luminara-logo.webp", "icon48.png", "icon128.png"):
+            self.assertTrue((cf_pub / asset).is_file(), f"Missing Cloudflare portal asset: {asset}")
+        self.assertFalse((cf_pub / "favicon.svg").exists(), "Legacy green-dot favicon.svg should be removed")
+        self.assertNotIn(".innerHTML", (cf_pub / "app.js").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

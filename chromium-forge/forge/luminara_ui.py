@@ -17,6 +17,7 @@ from .luminara_logo3d import (
     build_logo_3d_hero_badge_html,
     build_logo_3d_js,
     build_logo_3d_splash_html,
+    get_logo_favicon_data_uri,
 )
 from .luminara_workspace_ui import build_luminara_workspace_html
 from .models import ForkProfile
@@ -39,6 +40,7 @@ def build_luminara_newtab_html(
     logo_splash_html = build_logo_3d_splash_html(profile.brand_name, profile.chromium_version, agent_port, cdp_port)
     logo_hero_badge_html = build_logo_3d_hero_badge_html(profile.brand_name)
     logo_3d_js = build_logo_3d_js()
+    favicon_uri = get_logo_favicon_data_uri()
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -46,6 +48,7 @@ def build_luminara_newtab_html(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark light" />
+  <link rel="icon" type="image/png" href="{favicon_uri}" />
   <title>{brand_esc} — Agentic Command Deck</title>
   <style>
 {SHARED_UI_TOKENS_CSS}
@@ -141,7 +144,7 @@ def build_luminara_newtab_html(
     <div class="hero">
       <div class="hero-brand-wrap">
         {logo_hero_badge_html}
-        <div>
+        <div class="hero-brand-copy">
           <div class="kicker">CHROMIUM {html.escape(profile.chromium_version)} · CDP :{cdp_port} · MCP v2 :{agent_port} · TRAP .{html.escape(profile.trap_tld)}</div>
           <h1 id="greetingTitle">{brand_esc}</h1>
         </div>
@@ -329,8 +332,9 @@ def build_luminara_newtab_html(
       return node;
     }}
 
+    const INITIAL_HASH = location.hash || '';
     let sessionTok = (() => {{
-      const m = (location.hash || '').match(/(?:^#|&)lum_tok(?:en)?=([^&]+)/);
+      const m = INITIAL_HASH.match(/(?:^#|&)lum_tok(?:en)?=([^&]+)/);
       if (m) {{
         const tok = decodeURIComponent(m[1]);
         try {{
@@ -729,6 +733,7 @@ def build_luminara_newtab_html(
         const r = el('div', 'row-item');
         r.appendChild(el('span', 'mono', 'Agent co-browsing is disabled in ForkProfile.'));
         tBox.appendChild(r);
+        if (window.__luminaraSplashNotifyDaemon) window.__luminaraSplashNotifyDaemon(false, null);
         return;
       }}
       refreshBtn.disabled = true;

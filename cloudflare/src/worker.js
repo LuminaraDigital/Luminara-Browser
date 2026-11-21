@@ -130,12 +130,15 @@ export default {
       return jsonResponse({ error: "method_not_allowed" }, 405, { Allow: "GET, HEAD, OPTIONS" });
     }
 
-    if (path === "/favicon.ico" || path === "/favicon.svg") {
-      const svgIcon =
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#11161f"/><circle cx="16" cy="16" r="7" fill="#10b981"/></svg>';
-      return textResponse(svgIcon, "image/svg+xml; charset=utf-8", 200, {
-        "Cache-Control": "public, max-age=86400",
-      });
+    if (path === "/favicon.ico") {
+      if (env.ASSETS && typeof env.ASSETS.fetch === "function") {
+        const iconReq = new Request(new URL("/icon48.png", url.origin), { method: request.method });
+        const iconRes = await env.ASSETS.fetch(iconReq);
+        if (iconRes.ok) {
+          return withSecurityHeaders(iconRes, { "Cache-Control": "public, max-age=86400" });
+        }
+      }
+      return jsonResponse({ error: "Not found", path }, 404);
     }
 
     if (path === "/api/health") {

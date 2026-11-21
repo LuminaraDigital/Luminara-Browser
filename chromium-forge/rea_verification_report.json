@@ -5,7 +5,7 @@
   "all_obligations_passed": true,
   "passed_count": 21,
   "total_count": 21,
-  "elapsed_ms": 9762.4,
+  "elapsed_ms": 10018.3,
   "obligations": [
     {
       "obligation_id": "OBL-01",
@@ -101,7 +101,7 @@
         },
         "headless_smoke": {
           "exit_code": 0,
-          "dom_length": 122398,
+          "dom_length": 137292,
           "rendered_custom_ntp": true
         }
       }
