@@ -5,7 +5,7 @@
   "all_obligations_passed": true,
   "passed_count": 21,
   "total_count": 21,
-  "elapsed_ms": 10018.3,
+  "elapsed_ms": 5894.2,
   "obligations": [
     {
       "obligation_id": "OBL-01",
@@ -97,11 +97,11 @@
           "architecture": "x64",
           "sections": 11,
           "coff_timestamp": 1794073425,
-          "size_bytes": 4060672
+          "size_bytes": 3975168
         },
         "headless_smoke": {
           "exit_code": 0,
-          "dom_length": 137292,
+          "dom_length": 157631,
           "rendered_custom_ntp": true
         }
       }
@@ -218,10 +218,10 @@
       "confidence": "observed",
       "upstream_evidence": "perplexityai/SPACE ARCHITECTURE.toml + state/reconciliation; REA ev_adff4b085b51b54520b3e04626cb7fd926b852d79ddcfda09f2bacda3041fb10",
       "passed": true,
-      "details": "Verified 56 files (max 978L < 1,000L), 0 layer/XSS leaks, and monotonic lease_epoch fencing.",
+      "details": "Verified 63 files (max 974L < 1,000L), 0 layer/XSS leaks, and monotonic lease_epoch fencing.",
       "metrics": {
-        "max_observed_lines": 978,
-        "largest_file": "chromium-forge/forge/agent_server.py"
+        "max_observed_lines": 974,
+        "largest_file": "chromium-forge/forge/cdp_client.py"
       }
     },
     {
@@ -230,9 +230,9 @@
       "confidence": "observed",
       "upstream_evidence": "perplexityai/codescythe ARCHITECTURE.md; REA ev_2b2f3036c3ff6c2d3aa5a33d426c0bbaa2032eac492317261788a7b9da8d5550,ev_4b24a14f74d0665abfacd6adcf635e8bf0f748f2b69955781229409840b0d2d6",
       "passed": true,
-      "details": "Verified 52/52 forge modules reachable and synthetic orphan module caught.",
+      "details": "Verified 59/59 forge modules reachable and synthetic orphan module caught.",
       "metrics": {
-        "reachable_modules": 52,
+        "reachable_modules": 59,
         "unreferenced_exports": 0
       }
     },

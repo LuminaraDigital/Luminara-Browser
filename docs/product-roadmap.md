@@ -1,7 +1,7 @@
 # Luminara Browser — Production Roadmap (`/loop` Review-Gated)
 
-**Status:** 38/38 tasks complete (`v2.x` 10/10 + `v3.0.0` 100x Track 7/7 + Deep Re-Audit Loop 10/10 + `v3.1.0` Perplexity REA Suite 7/7 + `v3.1.0` Production Hardening Loop 4/4)  
-**Current Phase:** `v3.1.0` Production & Deployment Ready (All 21/21 REA Gates, Wheel, Portable & Cloudflare Green)
+**Status:** 47/47 tasks complete (`v2.x` 10/10 + `v3.0.0` 100x Track 7/7 + Deep Re-Audit Loop 10/10 + `v3.1.0` Perplexity REA Suite 7/7 + `v3.1.0` Production Hardening Loop 4/4 + `v3.1.0` Native Win32 Desktop Application Loop 4/4 + `v4.0.0` Warm Atelier × PiBot Fusion Loop 5/5)  
+**Current Phase:** `v4.0.0` Warm Atelier Precision × Calm Spatial OS + PiBot Multi-Bot Teams Release Ready (Native `luminara-shell` 3-Zone Spatial OS, Rust Win32 Host, Team Hub APIs, 21/21 REA Gates, Wheel, Portable, Cloudflare & 4-Root Skills Green)
 
 Every task must complete **1. Build → 2. Review (Code, Security, Design Tokens) → 3. Test End-to-End (empty/loading/error/success + automated suite) → 4. Fix** before marking `- [x]`.
 
@@ -67,3 +67,22 @@ Every task must complete **1. Build → 2. Review (Code, Security, Design Tokens
 - [x] **TASK-302**: Real `rea-agents@6.5.0` 12-Evidence Ledger across 7/7 Perplexity Targets (`rea_harvester.py`, `forge/rea_evidence/*.json`), Release-Scrubbed Copilot `ui_key=""` (`luminara_copilot_ext.py`), Decomposed Honest Search Eval & SSRF-Pinned Monitors (`monitors_eval.py`, `search_eval_runner.py`), and Out-of-Repo Wheel `arch_ratchet` (`0` unreferenced exports).
 - [x] **TASK-303**: Full `/workspace` Telemetry Cockpit Controls (Monitor Run/Delete/Diff, CAS Rollback, Signed `.zip` Casebundle Download/Verify, VRT Baseline/Compare/Lock, Honest `SKIPPED (No API Key)` Scorecard), WCAG 2.2 AA `3.1:1` Control Borders, Focus Trap/Roving Tablist, and MV3 `3.1.0` Parity.
 - [x] **TASK-304**: Complete 28-Tool `luminara_ctl.py` CLI (`outline`, `wait`, `screenshot`, `schedule`, `--human-auth`, `valid: false` exit `1`), 4-Root Main Skill Byte-Identical Sync, Hardened GitHub CI/Release Workflows, Expanded Regression Suite (`tests/test_perplexity_rea_v31.py`), and Independent CEO Release Gate Sign-Off.
+
+---
+
+## Tasks (v3.1.0 — Industry-Grade Native Win32 Desktop Application & Release Loop)
+
+- [x] **TASK-401**: Native Zero-Dependency Rust Win32 Desktop Supervisor (`desktop/` → `LuminaraBrowser.exe` — `WINDOWS_GUI`, `Luminara.Browser.Desktop`, `PerMonitorV2` DPI, `JobObject` orphan-free lifecycle, `Mutex+Condvar` WAL-safe shutdown, SDDL-locked user-SID Named Pipe single-instance routing, and `Shell_NotifyIconW` v4 System Tray).
+- [x] **TASK-402**: Zero-UAC Per-User Windows Installer & Uninstaller (`forge/desktop_build.py`, `forge/desktop_installer.py`, `forge/exe_icon.py` — `%LOCALAPPDATA%\Programs\Luminara Browser` separated from `%LOCALAPPDATA%\Luminara Browser\{User Data,AgentData,Logs}`, STA/MTA-safe COM `.lnk` shortcuts, HKCU Apps & Features + `luminara://` protocol, read-only upgrade & shell-free deferred cleanup).
+- [x] **TASK-403**: Thermo-Nuclear Agent Server Compaction (`forge/agent_tools_core.py`, `forge/agent_server.py` `621`L, `forge/agent_desktop.py`), `_last_actor` Human Takeover Preemption (`forge/cdp_client.py`, `forge/presence.py`), Studio `X-Luminara-UI-Key` Guard (`forge/studio.py`), and `H1–H50` Studio UI Craft (`forge/ui/index.html`).
+- [x] **TASK-404**: Cloudflare Edge Desktop Discovery (`cloudflare/src/worker.js`, `cloudflare/public/index.html`), `luminara_ctl.py` (`desktop-status`, `takeover --human-auth`) + 4-Root Byte-Identical Skill Sync, Hardened GitHub CI/Release ZIP Scrub Gates, and Independent CEO Double-Check Sign-Off.
+
+---
+
+## Tasks (v4.0.0 — Warm Atelier Precision × Calm Spatial OS & PiBot Multi-Agent Fusion)
+
+- [x] **TASK-501**: Synchronized Warm Atelier Precision Design System (`docs/design.md` + `docs/design.html` v4.0.0 — Warm Alabaster `#FAF9F6` / Deep Obsidian `#141519`, adaptive Light/Dark modes, WCAG 2.2 AA contrast `#117A5E`/`#3CD0A3`, Concentric Radius Law `20px`/`16px`/`10px`/`999px`, ambient per-Bot color washes).
+- [x] **TASK-502**: Luminara v4 Team Hub Backend (`forge/agent_team_hub.py` + `forge/agent_server.py` — AEAD-encrypted `outputs/llm_config.json`, Ollama `/api/tags` prober, PiBot-enriched teams `Pi`/`Remy`/`Dana`/`Research Team`, fenced live tab chat, unified Approval Inbox, password-safe Teach Mode recorder, tab focus, and Cross-Tab Live Lens).
+- [x] **TASK-503**: Luminara v4 Native Desktop Shell (`luminara-shell/` + `Launch-Luminara-v4.cmd` — React 19 + Electron `BaseWindow` + isolated 60/120fps `WebContentsView` tabs, working private omnibox, interactive 90+ tracker Privacy Shield, Mutation Firewall Approval Cards, encrypted `LocalStore`, `BotBrain`, and 5-stage `npm run smoke` E2E gate).
+- [x] **TASK-504**: Warm Atelier Chromium Surfaces (`forge/luminara_ui.py`, `forge/luminara_workspace_ui.py`, `forge/luminara_telemetry_ui.py`, `forge/luminara_copilot_ext.py`, `forge/portable.py` — Warm Atelier `luminara-theme` extension, Interactive Shield v3 popup, Calm Home working omnibox, Copilot Team Hub Drawer, and 7-surface `--release` `UI_KEY` scrub).
+- [x] **TASK-505**: `v4.0.0` Version Parity, Deployment & 4-Root Skill Sync (`.gitignore`, `.github/workflows/{ci,release-windows}.yml` with Node 22 + `luminara-shell` gates & 7-surface release zip audit, `pyproject.toml`, `desktop/{Cargo.toml,luminara.manifest}`, `forge/mcp_specs.py`, Warm Atelier Cloudflare Edge Worker/Portal `wrangler.toml`/`cloudflare/**`, 7-command secret-safe `luminara_ctl.py` + 4-root SHA-256 skill sync, and synchronized v4 docs).

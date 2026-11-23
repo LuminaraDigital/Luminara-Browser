@@ -15,11 +15,6 @@ from .scheduler import parse_schedule
 
 MAX_WAIT_SEC = 30.0
 
-# Tool actions that create standing autonomous behaviour: only a human (UI key) may trigger them.
-HUMAN_ONLY_ACTIONS: dict[str, frozenset[str]] = {
-    "browser_schedule": frozenset({"add", "enable", "run_now"}),
-}
-
 _AGENT = {"type": "string", "default": "mcp-agent"}
 
 MCP_TOOLS_FLOW_SPEC: list[dict[str, Any]] = [

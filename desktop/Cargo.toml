@@ -1,0 +1,19 @@
+[package]
+name = "luminara-browser-desktop"
+version = "4.0.0"
+edition = "2021"
+description = "Native zero-dependency Win32 desktop host, Job-Object supervisor, single-instance IPC router, and System Tray controller for Luminara Browser."
+license = "MIT"
+
+[[bin]]
+name = "LuminaraBrowser"
+path = "src/main.rs"
+
+[dependencies]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

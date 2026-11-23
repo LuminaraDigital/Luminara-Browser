@@ -4,75 +4,224 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark light" />
-  <title>Luminara Browser — Design System v3.1.0</title>
+  <title>Luminara Browser v4 — Design System Style Guide</title>
   <style>
     :root {
       color-scheme: dark light;
-      --bg-0: light-dark(oklch(0.975 0.005 255), oklch(0.115 0.012 255));
-      --bg-1: light-dark(oklch(0.95 0.007 255), oklch(0.15 0.013 255));
-      --bg-2: light-dark(oklch(0.915 0.009 255), oklch(0.188 0.015 255));
-      --bg-topbar: light-dark(oklch(0.965 0.006 255 / 0.88), oklch(0.12 0.012 255 / 0.86));
-      --ink-0: light-dark(oklch(0.15 0.015 255), oklch(0.965 0.005 255));
-      --ink-1: light-dark(oklch(0.34 0.015 255), oklch(0.78 0.012 255));
-      --ink-2: light-dark(oklch(0.44 0.015 255), oklch(0.67 0.012 255));
-      --accent: light-dark(oklch(0.45 0.15 162), oklch(0.75 0.16 162));
-      --amber: light-dark(oklch(0.48 0.14 72), oklch(0.79 0.15 78));
-      --danger: light-dark(oklch(0.50 0.19 26), oklch(0.68 0.18 25));
-      --hairline: light-dark(oklch(0.15 0.01 255 / 0.12), oklch(1 0 0 / 0.09));
-      --border-control: light-dark(oklch(0.15 0.01 255 / 0.34), oklch(1 0 0 / 0.28));
-      --specular: inset 0 1px 0 0 oklch(1 0 0 / 0.1);
       --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+      --rounded-shell: 20px;
+      --rounded-card: 16px;
+      --rounded-control: 10px;
+      --rounded-pill: 999px;
+      --space-xs: 4px;
+      --space-sm: 8px;
+      --space-md: 12px;
+      --space-lg: 16px;
+      --space-xl: 24px;
+      --bg-canvas: light-dark(#FAF9F6, #141519);
+      --bg-rail: light-dark(#F3F1EC, #1A1C22);
+      --bg-surface: light-dark(#FFFFFF, #1F2229);
+      --bg-elevated: light-dark(#ECEAE3, #282C35);
+      --ink-primary: light-dark(#1C1E24, #F6F5F0);
+      --ink-secondary: light-dark(#555A66, #B5BAC6);
+      --ink-muted: light-dark(#5A5F6B, #8F96A5);
+      --accent: light-dark(#117A5E, #3CD0A3);
+      --accent-ink: light-dark(#FFFFFF, #081C15);
+      --warn: light-dark(#8F5906, #F2B649);
+      --danger: light-dark(#BA2D2D, #F06E6E);
+      --danger-ink: light-dark(#FFFFFF, #1B0909);
+      --hairline: light-dark(#E4E2DB, #2C303A);
+      --border-control: light-dark(#8C8980, #676E82);
+      --bot-remy: #16A095;
+      --bot-dana: #2E7CF6;
+      --bot-pi: #7C4DFF;
+      --card-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 14px 34px -16px rgba(0, 0, 0, 0.55);
+      --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme="dark"]) {
+        --card-shadow: 0 1px 2px rgba(28, 30, 36, 0.05), 0 10px 28px -14px rgba(28, 30, 36, 0.14);
+      }
+    }
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --card-shadow: 0 1px 2px rgba(28, 30, 36, 0.05), 0 10px 28px -14px rgba(28, 30, 36, 0.14);
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --card-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 14px 34px -16px rgba(0, 0, 0, 0.55);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     body {
-      background: var(--bg-0); color: var(--ink-0); font-family: var(--font-sans);
-      padding: clamp(1rem, 3vw, 2.5rem); line-height: 1.5;
+      background: radial-gradient(720px 300px at 50% -6%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%), var(--bg-canvas);
+      color: var(--ink-primary);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.55;
+      padding: clamp(16px, 3vw, 40px);
+      -webkit-font-smoothing: antialiased;
     }
-    main { max-width: 1120px; margin: 0 auto; display: grid; gap: 20px; }
-    .kicker { font: 600 11px/1.2 var(--font-mono); letter-spacing: 0.11em; text-transform: uppercase; color: var(--accent); }
-    h1 { font-size: clamp(1.85rem, 3.4vw, 2.8rem); letter-spacing: -0.04em; line-height: 1.05; text-wrap: balance; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 14px; }
+    main { max-width: 1080px; margin: 0 auto; display: grid; gap: 32px; }
+    header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 16px; border-bottom: 1px solid var(--hairline); padding-bottom: 20px; }
+    .kicker { font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--accent); }
+    h1 { font-size: clamp(1.75rem, 3vw, 2.25rem); font-weight: 600; letter-spacing: -0.035em; line-height: 1.08; text-wrap: balance; margin-top: 6px; }
+    h2 { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 12px; }
+    p { color: var(--ink-secondary); max-width: 65ch; text-wrap: pretty; }
+    .mono { font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 14px; }
     .card {
-      background: var(--bg-1); border: 1px solid var(--hairline); box-shadow: var(--specular);
-      border-radius: 16px; padding: 16px; display: grid; gap: 8px; min-width: 0;
+      background: var(--bg-surface);
+      border: 1px solid var(--hairline);
+      box-shadow: var(--card-shadow);
+      border-radius: var(--rounded-card);
+      padding: var(--space-lg);
+      display: grid;
+      gap: 8px;
+      min-width: 0;
     }
-    .swatch { height: 42px; border-radius: 10px; border: 1px solid var(--hairline); }
-    .mono { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+    .swatch { height: 48px; border-radius: var(--rounded-control); border: 1px solid var(--hairline); }
+    .seg {
+      display: inline-flex; padding: 2px; border-radius: var(--rounded-control);
+      background: var(--bg-rail); border: 1px solid var(--hairline); gap: 2px;
+    }
+    .seg button {
+      min-height: 28px; padding: 4px 11px; border: 0; border-radius: 8px; background: transparent;
+      color: var(--ink-secondary); font: 500 12.5px/1.2 var(--font-sans); cursor: pointer;
+    }
+    .seg button.active { background: var(--bg-surface); color: var(--ink-primary); font-weight: 600; }
     .btn {
-      padding: 9px 14px; border-radius: 10px; border: 1px solid var(--accent);
-      background: color-mix(in oklch, var(--accent) 16%, transparent); color: var(--ink-0);
-      font: 600 12px var(--font-mono); cursor: pointer; width: fit-content;
+      min-height: 36px;
+      padding: 8px 14px;
+      border-radius: var(--rounded-control);
+      border: 1px solid var(--border-control);
+      background: var(--bg-surface);
+      color: var(--ink-primary);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: transform 130ms var(--ease-out), border-color 150ms var(--ease-out);
     }
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
-    }
+    .btn:hover:not(:disabled) { transform: translateY(-1px); border-color: var(--accent); }
+    .btn:active:not(:disabled) { transform: scale(0.97); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+    .btn.danger { background: var(--danger); border-color: var(--danger); color: var(--danger-ink); font-weight: 600; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: var(--rounded-pill); background: var(--bg-elevated); font-size: 12px; color: var(--ink-secondary); }
+    .row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    .approval { border-left: 3px solid var(--warn); }
+    .cols-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px; }
+    ul { padding-left: 18px; display: grid; gap: 6px; color: var(--ink-secondary); }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
   </style>
 </head>
 <body>
   <main>
     <header>
-      <div class="kicker">SYNCHRONIZED DESIGN SYSTEM · WCAG 2.2 AA · OKLCH LIGHT-DARK()</div>
-      <h1>Luminara Browser Visual Token Reference</h1>
-      <p class="mono" style="margin-top:6px;">Mirrored live specification for <code>docs/design.md</code> (v3.1.0)</p>
+      <div>
+        <div class="kicker">SYNCHRONIZED DESIGN SYSTEM · MIRROR OF DOCS/DESIGN.MD (V4.0.0)</div>
+        <h1>Luminara Browser v4 — Warm Atelier Precision</h1>
+        <p style="margin-top:6px;">Calm Spatial OS for multiplayer human + AI co-browsing. Adaptive Light, Dark &amp; System surfaces with ambient Bot washes and mathematically verified WCAG 2.2 AA contrast.</p>
+      </div>
+      <div class="seg" role="radiogroup" aria-label="Theme mode">
+        <button type="button" data-theme-pick="system" role="radio" aria-checked="true" class="active">Auto</button>
+        <button type="button" data-theme-pick="light" role="radio" aria-checked="false">Light</button>
+        <button type="button" data-theme-pick="dark" role="radio" aria-checked="false">Dark</button>
+      </div>
     </header>
-    <section class="grid" aria-label="Color Tokens">
-      <article class="card"><div class="swatch" style="background:var(--bg-0)"></div><strong>bg_canvas</strong><span class="mono">--bg-0</span></article>
-      <article class="card"><div class="swatch" style="background:var(--bg-1)"></div><strong>bg_panel</strong><span class="mono">--bg-1</span></article>
-      <article class="card"><div class="swatch" style="background:var(--bg-2)"></div><strong>bg_elevated</strong><span class="mono">--bg-2</span></article>
-      <article class="card"><div class="swatch" style="background:var(--accent)"></div><strong>accent_emerald</strong><span class="mono">--accent (&gt;= 4.8:1)</span></article>
-      <article class="card"><div class="swatch" style="background:var(--amber)"></div><strong>status_amber</strong><span class="mono">--amber (HITL Handoff)</span></article>
-      <article class="card"><div class="swatch" style="background:var(--danger)"></div><strong>status_danger</strong><span class="mono">--danger (Alert)</span></article>
-      <article class="card"><div class="swatch" style="background:var(--bg-1);border:2px solid var(--border-control)"></div><strong>border_control</strong><span class="mono">--border-control (&gt;= 3.1:1)</span></article>
+
+    <section aria-label="Colors">
+      <h2>Colors</h2>
+      <div class="grid">
+        <article class="card"><div class="swatch" style="background:var(--bg-canvas)"></div><strong>bg_canvas</strong><span class="mono">#FAF9F6 / #141519</span></article>
+        <article class="card"><div class="swatch" style="background:var(--bg-rail)"></div><strong>bg_rail</strong><span class="mono">#F3F1EC / #1A1C22</span></article>
+        <article class="card"><div class="swatch" style="background:var(--bg-surface)"></div><strong>bg_surface</strong><span class="mono">#FFFFFF / #1F2229</span></article>
+        <article class="card"><div class="swatch" style="background:var(--accent)"></div><strong>accent_brand</strong><span class="mono">#117A5E / #3CD0A3</span></article>
+        <article class="card"><div class="swatch" style="background:var(--ink-muted)"></div><strong>ink_muted</strong><span class="mono">#5A5F6B / #8F96A5</span></article>
+        <article class="card"><div class="swatch" style="background:var(--border-control)"></div><strong>border_control</strong><span class="mono">#8C8980 / #676E82</span></article>
+        <article class="card"><div class="swatch" style="background:var(--warn)"></div><strong>status_warn</strong><span class="mono">#8F5906 / #F2B649</span></article>
+        <article class="card"><div class="swatch" style="background:var(--danger)"></div><strong>status_danger</strong><span class="mono">#BA2D2D / #F06E6E</span></article>
+        <article class="card"><div class="swatch" style="background:var(--bot-remy)"></div><strong>bot_remy</strong><span class="mono">#16A095 · Researcher</span></article>
+        <article class="card"><div class="swatch" style="background:var(--bot-dana)"></div><strong>bot_dana</strong><span class="mono">#2E7CF6 · Analyst</span></article>
+        <article class="card"><div class="swatch" style="background:var(--bot-pi)"></div><strong>bot_pi</strong><span class="mono">#7C4DFF · Main Bot</span></article>
+      </div>
     </section>
-    <section class="card">
-      <div class="kicker">INTERACTIVE STATES &amp; CONCENTRIC RADIUS LAW (20px = 10px + 10px)</div>
-      <div style="background:var(--bg-2);padding:10px;border-radius:20px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-        <button class="btn" type="button">Primary CTA (Tab to verify 2px focus ring)</button>
-        <span class="mono">Metrics: 21/21 REA PASS · 28 MCP Tools · 0 leaks</span>
+
+    <section aria-label="Typography">
+      <h2>Typography</h2>
+      <div class="card">
+        <div style="font-size:2.25rem;font-weight:600;letter-spacing:-0.035em;line-height:1.08;">Display — What are we working on today?</div>
+        <div style="font-size:1.25rem;font-weight:600;letter-spacing:-0.02em;">Heading — Cross-Tab Live Comparison</div>
+        <p>Body — Plain, human language for chat responses, onboarding, and approval explanations capped at 65ch for calm readability.</p>
+        <div class="mono" style="color:var(--ink-muted);">Mono (URLs, shortcuts &amp; tabular metrics only) — https://acme-optics.com · Alt+K / Ctrl+Shift+K (Ctrl+K in Desktop Shell) · 14 trackers blocked</div>
+      </div>
+    </section>
+
+    <section aria-label="Shapes and Elevation">
+      <h2>Concentric Shapes &amp; Components</h2>
+      <div class="cols-2">
+        <article class="card">
+          <div class="kicker">CONCENTRIC RADIUS (20PX = 10PX + 10PX)</div>
+          <div style="background:var(--bg-elevated);padding:10px;border-radius:20px;" class="row">
+            <button class="btn primary" type="button">Primary Action</button>
+            <button class="btn" type="button">Secondary</button>
+            <button class="btn danger" type="button">STOP ■</button>
+            <button class="btn" type="button" disabled>Disabled</button>
+            <span class="pill">✓ Work receipt · 2.4s</span>
+          </div>
+        </article>
+        <article class="card approval">
+          <div class="kicker" style="color:var(--warn);">PLAIN-ENGLISH APPROVAL CARD</div>
+          <strong>Remy wants to submit quote request on acme-optics.com</strong>
+          <p style="font-size:13px;">Paused by Mutation Firewall before sending POST. Your credentials stay sealed in local Vault.</p>
+          <div class="row">
+            <button class="btn" type="button">Deny</button>
+            <button class="btn primary" type="button">Allow once</button>
+            <button class="btn" type="button">Always for site</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section aria-label="Dos and Donts">
+      <h2>Do's and Don'ts</h2>
+      <div class="cols-2">
+        <article class="card">
+          <strong style="color:var(--accent);">✓ Do</strong>
+          <ul>
+            <li>Open instantly (&lt;50ms) with a crisp SVG mark and zero splash delay.</li>
+            <li>Write every control, notification, and approval card in plain English.</li>
+            <li>Tuck MCP endpoints, SHA-256 ledgers, and VRT behind Developer Mode.</li>
+            <li>Support Light, Dark, System themes and 320px reflow cleanly.</li>
+          </ul>
+        </article>
+        <article class="card">
+          <strong style="color:var(--danger);">✕ Don't</strong>
+          <ul>
+            <li>Dump raw <code>JSON.stringify</code> in the Side Panel.</li>
+            <li>Burn 60fps GPU shaders on idle new tabs or clash gold/slate/grey palettes.</li>
+            <li>Expose raw port numbers (<code>:9229</code>, <code>:8796</code>) on everyday home screens.</li>
+            <li>Assign raw HTML strings anywhere in browser UI or extensions.</li>
+          </ul>
+        </article>
       </div>
     </section>
   </main>
+  <script>
+    const root = document.documentElement;
+    const btns = Array.from(document.querySelectorAll('[data-theme-pick]'));
+    function applyTheme(mode) {
+      if (mode === 'light' || mode === 'dark') root.setAttribute('data-theme', mode);
+      else root.removeAttribute('data-theme');
+      btns.forEach(b => {
+        const on = b.getAttribute('data-theme-pick') === mode;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', String(on));
+      });
+    }
+    btns.forEach(b => b.addEventListener('click', () => applyTheme(b.getAttribute('data-theme-pick'))));
+  </script>
 </body>
 </html>

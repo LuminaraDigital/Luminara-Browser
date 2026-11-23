@@ -295,9 +295,11 @@ class TestProductionHardeningAndAB(unittest.TestCase):
             nt_dir = w / "newtab_ext"
             sh_dir = w / "shield_ext"
             write_copilot_extension(cop_dir, prof)
-            from forge.portable import _write_offline_newtab_extension, _write_shield_extension
-            _write_offline_newtab_extension(nt_dir, prof, nt_html, ws_html)
-            _write_shield_extension(sh_dir, prof)
+            from forge.portable import _write_offline_newtab_extension, _write_shield_extension, _write_theme_extension
+            _write_offline_newtab_extension(nt_dir, prof, nt_html, ws_html, ui_key="")
+            _write_shield_extension(sh_dir, prof, ui_key="")
+            th_dir = w / "theme_ext"
+            _write_theme_extension(th_dir, prof)
             cf_inline = re.search(r"<script>(.*)</script>", cf_html, re.S)
             cf_js = (
                 cf_inline.group(1)
@@ -315,6 +317,7 @@ class TestProductionHardeningAndAB(unittest.TestCase):
                 "newtab_bg.js": (nt_dir / "newtab_bg.js").read_text(encoding="utf-8"),
                 "farble.js": (sh_dir / "farble.js").read_text(encoding="utf-8"),
                 "webmcp_bootstrap.js": (sh_dir / "webmcp_bootstrap.js").read_text(encoding="utf-8"),
+                "shield_popup.js": (sh_dir / "popup.js").read_text(encoding="utf-8"),
             }
             for fname, code in scripts.items():
                 self.assertNotIn(".innerHTML", code, f"Found .innerHTML in {fname}")
@@ -322,6 +325,26 @@ class TestProductionHardeningAndAB(unittest.TestCase):
                 p.write_text(code, encoding="utf-8")
                 proc = subprocess.run([node_bin, "--check", str(p)], capture_output=True, text=True, timeout=10)
                 self.assertEqual(proc.returncode, 0, f"JavaScript SyntaxError in {fname}: {proc.stderr}")
+
+            # Phase 1B hardening contracts for newtab_bg.js, shield_popup.js, copilot commands, theme & search override
+            self.assertIn('const UI_KEY = "";', scripts["newtab_bg.js"])
+            self.assertIn("luminaraApi", scripts["newtab_bg.js"])
+            self.assertIn("newtab.html#ask=", scripts["newtab_bg.js"])
+            self.assertIn('const UI_KEY = "";', scripts["shield_popup.js"])
+            self.assertIn("allowAllRequests", scripts["shield_popup.js"])
+            self.assertIn("getDynamicRules", scripts["shield_popup.js"])
+            self.assertIn("open-team-panel", scripts["background.js"])
+            cp_man = json.loads((cop_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(cp_man["commands"]["open-team-panel"]["suggested_key"]["default"], "Alt+L")
+            th_man = json.loads((th_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertIn("icons", th_man)
+            self.assertTrue((th_dir / "icons" / "icon128.png").is_file())
+            nt_man = json.loads((nt_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(nt_man["chrome_settings_overrides"]["search_provider"]["favicon_url"], "https://duckduckgo.com/favicon.ico")
+            nosearch_dir = w / "newtab_nosearch"
+            _write_offline_newtab_extension(nosearch_dir, ForkProfile(default_search="nosearch"), nt_html, ws_html)
+            ns_man = json.loads((nosearch_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertNotIn("chrome_settings_overrides", ns_man)
 
     def test_live_end_to_end_newtab_workspace_undo_redo_and_cli_qa(self) -> None:
         import sys
@@ -368,16 +391,14 @@ class TestProductionHardeningAndAB(unittest.TestCase):
                     None,
                     """(() => {
                         const splash = document.getElementById('luminaraSplash');
-                        const track = document.getElementById('splashProgressTrack');
-                        const progressBefore = Number(track ? track.getAttribute('aria-valuenow') : 0);
+                        const startsHidden = Boolean(splash && splash.classList.contains('hidden'));
+                        const noIdleHeroCanvas = document.getElementById('heroLogoCanvas') === null;
+                        window.__luminaraLogo3D.openSplash();
+                        const openedOk = Boolean(splash && !splash.classList.contains('hidden'));
                         const pulseBtn = document.getElementById('btnPulseLogo');
                         pulseBtn.focus();
                         pulseBtn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
                         const stillOpenAfterBtnEnter = !splash.classList.contains('hidden');
-                        window.__luminaraLogo3D.closeSplash();
-                        const closedOk = splash.classList.contains('hidden');
-                        window.__luminaraLogo3D.openSplash();
-                        const reopenedOk = !splash.classList.contains('hidden');
                         const canvas = document.getElementById('splashLogoCanvas');
                         const canvasBounded = canvas.width >= 64 && canvas.width <= 1024;
                         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
@@ -388,20 +409,20 @@ class TestProductionHardeningAndAB(unittest.TestCase):
                         return {
                             todoCount: todos.length,
                             firstTodo: todos[0] ? todos[0].text : '',
-                            progressBefore,
+                            startsHidden,
+                            noIdleHeroCanvas,
+                            openedOk,
                             stillOpenAfterBtnEnter,
-                            closedOk,
-                            reopenedOk,
                             canvasBounded,
                             closedOnEsc,
                         };
                     })()""",
                 )
                 self.assertEqual(nt_state["firstTodo"], "Live QA Task")
-                self.assertEqual(nt_state["progressBefore"], 100)
+                self.assertTrue(nt_state["startsHidden"])
+                self.assertTrue(nt_state["noIdleHeroCanvas"])
+                self.assertTrue(nt_state["openedOk"])
                 self.assertTrue(nt_state["stillOpenAfterBtnEnter"])
-                self.assertTrue(nt_state["closedOk"])
-                self.assertTrue(nt_state["reopenedOk"])
                 self.assertTrue(nt_state["canvasBounded"])
                 self.assertTrue(nt_state["closedOnEsc"])
 

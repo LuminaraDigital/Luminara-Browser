@@ -1,7 +1,7 @@
 """Clean-room Generative UI Workspace Generator (`forge/luminara_workspace_ui.py`).
 
 Production upgrades:
-- Zero dynamic `.innerHTML` (full DOM XSS immunity across `SummaryBar` KPIs and `TableView`).
+- Zero raw HTML string injection (full DOM XSS immunity across `SummaryBar` KPIs and `TableView`).
 - Real interactive column sorting (`aria-sort` + natural numeric `Intl.Collator`) in `Sortable Table`.
 - Unified `getVisibleEntities()` shared across `ComparisonView`, `Sortable Table`, `SummaryBar`, and RFC 4180 CSV/JSON/MD Export.
 - Input-safe `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` 50-slot `CommandHistory` + cross-origin `/api/agent/genui/sync`.
@@ -13,6 +13,7 @@ from __future__ import annotations
 import html
 
 from .luminara_copilot_ext import (
+    SHARED_UI_TOKENS_CSS,
     _js_json,
     build_palette_js,
     make_solid_emerald_png,
@@ -46,73 +47,66 @@ def build_luminara_workspace_html(
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark light" />
   <link rel="icon" type="image/png" href="{favicon_uri}" />
-  <title>{brand_esc} — Generative UI Workspace</title>
+  <title>{brand_esc} — Live Lens Workspace</title>
   <style>
-    :root {{
-      color-scheme: dark light;
-      --bg-0: light-dark(oklch(0.975 0.005 255), oklch(0.115 0.012 255));
-      --bg-1: light-dark(oklch(0.95 0.007 255), oklch(0.15 0.013 255));
-      --bg-2: light-dark(oklch(0.915 0.009 255), oklch(0.188 0.015 255));
-      --ink-0: light-dark(oklch(0.15 0.015 255), oklch(0.965 0.005 255));
-      --ink-1: light-dark(oklch(0.34 0.015 255), oklch(0.78 0.012 255));
-      --ink-2: light-dark(oklch(0.44 0.015 255), oklch(0.67 0.012 255));
-      --accent: light-dark(oklch(0.45 0.15 162), oklch(0.75 0.16 162));
-      --amber: light-dark(oklch(0.48 0.14 72), oklch(0.79 0.15 78));
-      --danger: light-dark(oklch(0.50 0.19 26), oklch(0.68 0.18 25));
-      --hairline: light-dark(oklch(0.15 0.01 255 / 0.12), oklch(1 0 0 / 0.09));
-      --border-control: light-dark(oklch(0.15 0.01 255 / 0.34), oklch(1 0 0 / 0.28));
-      --specular: inset 0 1px 0 0 oklch(1 0 0 / 0.1);
-      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      --font-mono: 'JetBrains Mono', Consolas, monospace;
-    }}
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    :focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
+{SHARED_UI_TOKENS_CSS}
     body {{
-      min-height: 100dvh; background: var(--bg-0); color: var(--ink-0);
-      font-family: var(--font-sans); padding: clamp(0.85rem, 2.5vw, 2rem);
-      display: grid; gap: 16px; align-content: start;
+      min-height: 100dvh;
+      background: radial-gradient(780px 300px at 50% -6%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 72%), var(--bg-0);
+      color: var(--ink-0);
+      font-family: var(--font-sans); font-size: 14px; line-height: 1.55;
+      padding: clamp(0.85rem, 2.5vw, 2rem);
+      display: grid; gap: 16px; align-content: start; -webkit-font-smoothing: antialiased;
     }}
-    header, .toolbar, .auth-bar, .kpi-bar, .status-line, main {{ max-width: 1280px; width: 100%; margin: 0 auto; min-width: 0; }}
+    header, .toolbar, .auth-bar, .kpi-bar, .status-line, main {{ max-width: 1200px; width: 100%; margin: 0 auto; min-width: 0; }}
     header {{ display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }}
     .toolbar, .auth-bar {{
-      background: var(--bg-1); border: 1px solid var(--hairline); box-shadow: var(--specular);
-      border-radius: 16px; padding: 12px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; align-items: center;
+      background: var(--bg-1); border: 1px solid var(--hairline); box-shadow: var(--card-shadow);
+      border-radius: var(--r-card); padding: 12px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; align-items: center;
     }}
-    .auth-bar {{ display: none; border-color: color-mix(in oklch, var(--amber) 50%, transparent); }}
+    .auth-bar {{ display: none; border-color: color-mix(in srgb, var(--amber) 50%, var(--hairline)); }}
     .auth-bar.visible {{ display: flex; }}
     .btn {{
-      min-height: 32px;
-      padding: 8px 13px; border-radius: 10px; border: 1px solid var(--border-control);
-      background: var(--bg-2); color: var(--ink-0); font-family: var(--font-mono);
-      font-size: 11px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center;
+      min-height: 34px;
+      padding: 7px 13px; border-radius: var(--r-control); border: 1px solid var(--border-control);
+      background: var(--bg-1); color: var(--ink-0); font-family: var(--font-sans); font-weight: 500;
+      font-size: 12.5px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+      transition: transform 130ms var(--ease-out), border-color 150ms var(--ease-out);
     }}
-    .btn.active {{ border-color: var(--accent); color: var(--accent); }}
+    .btn:hover:not(:disabled) {{ border-color: var(--accent); transform: translateY(-1px); }}
+    .btn:active:not(:disabled) {{ transform: scale(0.97); }}
+    .btn.active {{ border-color: var(--accent); background: var(--bg-2); color: var(--accent); font-weight: 600; }}
+    .btn.primary {{ background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }}
+    .btn.stop {{ background: var(--danger); border-color: var(--danger); color: var(--danger-ink); font-weight: 600; }}
     .btn:disabled {{ opacity: 0.45; cursor: not-allowed; }}
+    .theme-seg {{ display: inline-flex; padding: 2px; border-radius: var(--r-control); background: var(--bg-rail); border: 1px solid var(--hairline); gap: 2px; }}
+    .theme-seg button {{ min-height: 26px; border: 0; background: transparent; color: var(--ink-1); padding: 4px 9px; border-radius: 8px; font: 500 12px/1.2 var(--font-sans); cursor: pointer; }}
+    .theme-seg button.active {{ background: var(--bg-1); color: var(--ink-0); font-weight: 600; box-shadow: var(--specular); }}
     .search-box {{
-      min-height: 32px; width: 185px; max-width: 100%;
-      background: var(--bg-2); border: 1px solid var(--border-control); border-radius: 10px;
-      color: var(--ink-0); font-family: var(--font-mono); font-size: 11.5px; text-align: left; padding: 6px 10px;
+      min-height: 34px; width: 185px; max-width: 100%;
+      background: var(--bg-0); border: 1px solid var(--border-control); border-radius: var(--r-control);
+      color: var(--ink-0); font-family: var(--font-sans); font-size: 13px; text-align: left; padding: 6px 10px;
     }}
-    .status-line {{ font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-2); }}
+    .status-line {{ font-family: var(--font-sans); font-size: 12.5px; color: var(--ink-2); }}
     .status-line.err {{ color: var(--danger); }}
     .kpi-bar {{
       display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 12px;
     }}
     .kpi-card {{
-      background: var(--bg-1); border: 1px solid var(--hairline); box-shadow: var(--specular);
-      border-radius: 14px; padding: 14px; font-variant-numeric: tabular-nums; min-width: 0;
+      background: var(--bg-1); border: 1px solid var(--hairline); box-shadow: var(--card-shadow);
+      border-radius: var(--r-card); padding: 14px 16px; font-variant-numeric: tabular-nums; min-width: 0;
     }}
-    .kpi-label {{ font-family: var(--font-mono); font-size: 11px; color: var(--ink-2); text-transform: uppercase; }}
-    .kpi-val {{ font-size: 24px; font-weight: 700; margin-top: 4px; color: var(--accent); }}
+    .kpi-label {{ font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; color: var(--ink-2); text-transform: uppercase; }}
+    .kpi-val {{ font-family: var(--font-mono); font-size: 24px; font-weight: 600; margin-top: 4px; color: var(--accent); font-variant-numeric: tabular-nums; }}
     .grid-cards {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 14px; }}
     .ent-card {{
-      background: var(--bg-1); border: 1px solid var(--hairline); box-shadow: var(--specular);
-      border-radius: 16px; padding: 16px; display: grid; gap: 10px; min-width: 0;
+      background: var(--bg-1); border: 1px solid var(--hairline); box-shadow: var(--card-shadow);
+      border-radius: var(--r-card); padding: 16px; display: grid; gap: 10px; min-width: 0;
     }}
-    .ent-title {{ font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }}
+    .ent-title {{ font-size: 15.5px; font-weight: 600; letter-spacing: -0.015em; overflow-wrap: anywhere; }}
     .attr-row {{
       display: flex; justify-content: space-between; align-items: center; gap: 8px;
-      padding: 6px 8px; border-radius: 8px; background: var(--bg-2); font-size: 12px; min-width: 0;
+      padding: 6px 10px; border-radius: var(--r-control); background: var(--bg-2); font-size: 12.5px; min-width: 0;
     }}
     .attr-val {{
       flex: 1 1 90px; min-width: 0; min-height: 26px;
@@ -121,14 +115,14 @@ def build_luminara_workspace_html(
       font-variant-numeric: tabular-nums;
     }}
     .attr-val:focus {{ border-color: var(--accent); background: var(--bg-0); }}
-    .table-wrap {{ width: 100%; overflow-x: auto; border-radius: 14px; border: 1px solid var(--hairline); }}
+    .table-wrap {{ width: 100%; overflow-x: auto; border-radius: var(--r-card); border: 1px solid var(--hairline); box-shadow: var(--card-shadow); }}
     table {{ width: 100%; border-collapse: collapse; background: var(--bg-1); font-variant-numeric: tabular-nums; }}
     th, td {{ padding: 10px 12px; border-bottom: 1px solid var(--hairline); text-align: left; font-size: 13px; }}
-    th {{ background: var(--bg-2); padding: 0; }}
+    th {{ background: var(--bg-rail); padding: 0; }}
     .th-sort {{
       width: 100%; padding: 10px 12px; background: transparent; border: 0; cursor: pointer;
       display: flex; justify-content: space-between; align-items: center; gap: 6px;
-      font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; color: var(--ink-2);
+      font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2);
     }}
     .th-sort:hover {{ color: var(--accent); }}
     {tele_css}
@@ -140,20 +134,25 @@ def build_luminara_workspace_html(
 <body>
   <header>
     <div>
-      <div style="font-family:var(--font-mono);font-size:11px;color:var(--accent);letter-spacing:0.11em;">GENERATIVE UI WORKSPACE · 50-SLOT COMMAND HISTORY</div>
-      <h1 id="wsTitle" style="font-size:clamp(1.35rem,2.4vw,1.75rem);letter-spacing:-0.03em;">Extracted Entity Studio</h1>
+      <div style="font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--accent);letter-spacing:0.09em;text-transform:uppercase;">LIVE LENS · EDITABLE COMPARISON</div>
+      <h1 id="wsTitle" style="font-size:clamp(1.35rem,2.4vw,1.8rem);font-weight:600;letter-spacing:-0.025em;text-wrap:balance;">Live Lens Workspace</h1>
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-      <a class="btn" href="{html.escape(newtab_uri)}">← Command Deck</a>
-      <button class="btn" type="button" id="btnCaptureActive">Capture Live Tab</button>
+      <a class="btn" href="{html.escape(newtab_uri)}">← Calm Home</a>
+      <div class="theme-seg" role="radiogroup" aria-label="Color theme">
+        <button type="button" data-theme-pick="system" role="radio" aria-checked="true" class="active">Auto</button>
+        <button type="button" data-theme-pick="light" role="radio" aria-checked="false">Light</button>
+        <button type="button" data-theme-pick="dark" role="radio" aria-checked="false">Dark</button>
+      </div>
+      <button class="btn primary" type="button" id="btnCaptureActive">Capture Live Tab</button>
     </div>
   </header>
 
   <form class="auth-bar" id="wsAuthBar">
-    <label class="status-line" for="wsPassportInput">Agent Passport or Human UI Key required by daemon:</label>
+    <label class="status-line" for="wsPassportInput">Local authorization key needed to connect to Luminara:</label>
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-      <input class="search-box" id="wsPassportInput" type="password" placeholder="Enter Token or 64-hex UI Key" autocomplete="off" />
-      <button class="btn active" type="submit">Authenticate ↵</button>
+      <input class="search-box" id="wsPassportInput" type="password" placeholder="Enter access key" autocomplete="off" />
+      <button class="btn active" type="submit">Connect ↵</button>
     </div>
   </form>
 
@@ -162,19 +161,19 @@ def build_luminara_workspace_html(
       <button class="btn active" type="button" role="tab" aria-selected="true" data-view="comparison">Comparison Cards</button>
       <button class="btn" type="button" role="tab" aria-selected="false" data-view="table">Sortable Table</button>
       <button class="btn" type="button" role="tab" aria-selected="false" data-view="stack">Stack Inspector</button>
-      <button class="btn" type="button" role="tab" aria-selected="false" data-view="telemetry">Telemetry Cockpit</button>
+      <button class="btn" type="button" role="tab" aria-selected="false" data-view="telemetry">Developer · Telemetry Cockpit</button>
     </div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;" id="entityToolsGroup">
-      <input class="search-box" id="wsSearch" type="search" placeholder="Filter entities..." aria-label="Filter workspace entities" />
-      <button class="btn" type="button" id="btnUndo" disabled>↶ Undo (Ctrl+Z)</button>
-      <button class="btn" type="button" id="btnRedo" disabled>↷ Redo (Ctrl+Y)</button>
-      <button class="btn" type="button" data-dl="json">Export JSON</button>
-      <button class="btn" type="button" data-dl="csv">Export CSV</button>
-      <button class="btn" type="button" data-dl="md">Export Markdown</button>
+      <input class="search-box" id="wsSearch" type="search" placeholder="Filter items..." aria-label="Filter workspace items" />
+      <button class="btn" type="button" id="btnUndo" disabled>↶ Undo</button>
+      <button class="btn" type="button" id="btnRedo" disabled>↷ Redo</button>
+      <button class="btn" type="button" data-dl="json">JSON</button>
+      <button class="btn" type="button" data-dl="csv">CSV</button>
+      <button class="btn" type="button" data-dl="md">Markdown</button>
     </div>
   </div>
 
-  <div class="status-line" id="wsStatus" role="status" aria-live="polite">Ready · Click any cell to edit with 50-slot Undo/Redo, or switch to Sortable Table to sort columns.</div>
+  <div class="status-line" id="wsStatus" role="status" aria-live="polite">Click any value to edit with Undo/Redo, or switch to Sortable Table to rank columns.</div>
   <section class="kpi-bar" id="kpiBar" aria-label="Key Metric Summary"></section>
   <main id="viewContainer"></main>
 
@@ -280,25 +279,25 @@ def build_luminara_workspace_html(
         if (raw) return JSON.parse(raw);
       }} catch (_e) {{}}
       return {{
-        title: 'Luminara Sample Benchmark Workspace',
+        title: 'Live Lens — Private Search Comparison',
         entity_count: 3,
         recommended_view: 'comparison',
         summary_bar: {{ metric_name: 'Latency (ms)', count: 3, min: 18, max: 64, avg: 38.0, spread_pct: 121.1 }},
         entities: [
-          {{ id: 'ent_001', public_identifier: 'Luminara Browser 157 (Loopback CDP)', attributes: [
+          {{ id: 'ent_001', public_identifier: 'DuckDuckGo', attributes: [
             {{ name: 'Latency (ms)', value: '18', widget: 'number', editable: true }},
-            {{ name: 'Google Telemetry', value: '0 requests', widget: 'short_text', editable: true }},
-            {{ name: 'Co-Browsing', value: 'Human + MCP v2 Shared Window', widget: 'short_text', editable: true }}
+            {{ name: 'Privacy Model', value: 'No user tracking profile', widget: 'short_text', editable: true }},
+            {{ name: 'Pricing', value: 'Free', widget: 'short_text', editable: true }}
           ]}},
-          {{ id: 'ent_002', public_identifier: 'Cloud-Wrapper Agent Browser (Baseline)', attributes: [
+          {{ id: 'ent_002', public_identifier: 'Kagi', attributes: [
             {{ name: 'Latency (ms)', value: '32', widget: 'number', editable: true }},
-            {{ name: 'Google Telemetry', value: 'Proprietary Cloud', widget: 'short_text', editable: true }},
-            {{ name: 'Co-Browsing', value: 'Built-in Assistant Only', widget: 'short_text', editable: true }}
+            {{ name: 'Privacy Model', value: 'Zero-ad subscription', widget: 'short_text', editable: true }},
+            {{ name: 'Pricing', value: '$10 / mo', widget: 'short_text', editable: true }}
           ]}},
-          {{ id: 'ent_003', public_identifier: 'Legacy Webview Prototype (Baseline)', attributes: [
+          {{ id: 'ent_003', public_identifier: 'Brave Search', attributes: [
             {{ name: 'Latency (ms)', value: '64', widget: 'number', editable: true }},
-            {{ name: 'Google Telemetry', value: 'Unfiltered', widget: 'short_text', editable: true }},
-            {{ name: 'Co-Browsing', value: 'None', widget: 'short_text', editable: true }}
+            {{ name: 'Privacy Model', value: 'Independent index', widget: 'short_text', editable: true }},
+            {{ name: 'Pricing', value: 'Free / Pro', widget: 'short_text', editable: true }}
           ]}}
         ]
       }};
@@ -434,7 +433,7 @@ def build_luminara_workspace_html(
       try {{ localStorage.setItem(KEY_VIEW, currentView); }} catch (_e) {{}}
       const entGroup = document.getElementById('entityToolsGroup');
       if (entGroup) entGroup.style.display = currentView === 'telemetry' ? 'none' : 'flex';
-      document.getElementById('wsTitle').textContent = currentView === 'telemetry' ? 'REA Security & Evaluation Cockpit' : (state.title || 'Generative UI Workspace');
+      document.getElementById('wsTitle').textContent = currentView === 'telemetry' ? 'Developer · Telemetry Cockpit' : (state.title || 'Live Lens Workspace');
       const allEntities = state.entities || [];
       const entities = getVisibleEntities();
       const kpi = document.getElementById('kpiBar');
@@ -623,6 +622,8 @@ def build_luminara_workspace_html(
       const ctrl = new AbortController();
       captureAbort = ctrl;
       btn.textContent = 'STOP ■';
+      btn.classList.remove('primary');
+      btn.classList.add('stop');
       stEl.classList.remove('err');
       stEl.textContent = 'Capturing structured entities from live browser tab...';
       try {{
@@ -655,6 +656,8 @@ def build_luminara_workspace_html(
         if (captureAbort === ctrl) captureAbort = null;
         btn.disabled = false;
         btn.textContent = 'Capture Live Tab';
+        btn.classList.remove('stop');
+        btn.classList.add('primary');
       }}
     }};
 
@@ -757,6 +760,48 @@ def build_luminara_workspace_html(
         render();
       }});
     }}
+
+    function applyWsTheme(mode) {{
+      const m = (mode === 'light' || mode === 'dark') ? mode : 'system';
+      if (m === 'system') document.documentElement.removeAttribute('data-theme');
+      else document.documentElement.setAttribute('data-theme', m);
+      document.querySelectorAll('[data-theme-pick]').forEach(b => {{
+        const on = b.getAttribute('data-theme-pick') === m;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-checked', String(on));
+      }});
+    }}
+    (() => {{
+      let initTheme = 'system';
+      try {{
+        const s = JSON.parse(localStorage.getItem(KEY_SETTINGS) || '{{}}');
+        if (s && s.theme) initTheme = s.theme;
+      }} catch (_e) {{}}
+      applyWsTheme(initTheme);
+      const tBtns = Array.from(document.querySelectorAll('[data-theme-pick]'));
+      tBtns.forEach((b, idx) => {{
+        b.addEventListener('click', () => {{
+          const next = b.getAttribute('data-theme-pick') || 'system';
+          try {{
+            const s = JSON.parse(localStorage.getItem(KEY_SETTINGS) || '{{}}');
+            s.theme = next;
+            localStorage.setItem(KEY_SETTINGS, JSON.stringify(s));
+          }} catch (_e) {{}}
+          applyWsTheme(next);
+        }});
+        b.addEventListener('keydown', e => {{
+          if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+          e.preventDefault();
+          const nxt = tBtns[(idx + (e.key === 'ArrowRight' ? 1 : tBtns.length - 1)) % tBtns.length];
+          nxt.focus(); nxt.click();
+        }});
+      }});
+      window.addEventListener('storage', ev => {{
+        if (ev.key === KEY_SETTINGS) {{
+          try {{ applyWsTheme((JSON.parse(ev.newValue || '{{}}').theme) || 'system'); }} catch (_e) {{}}
+        }}
+      }});
+    }})();
 
     persistState();
     render();

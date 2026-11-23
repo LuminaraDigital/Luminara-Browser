@@ -6,7 +6,7 @@ from .downloads import retrieve_downloads
 from .patcher import merge_patch_directories
 from .pruner import scan_source_lists
 
-__version__ = "3.1.0"
+__version__ = "4.0.0"
 __all__ = [
     "__version__",
     "generate_standalone_domsub_script",

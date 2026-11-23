@@ -7,7 +7,7 @@ Concentric Radius Law, `tabular-nums`) and `design-better` heuristics (`H1-H50`)
 - All 4 async states (`empty`, `loading` with `STOP ■` `AbortController`, `error` with Retry, `success`).
 - Top-aligned `<label for="...">` with `onBlur` validation across Monitors, Playbook CAS, Casebundle, and VRT forms.
 - Persistent `localStorage` state (`luminara_browser:telemetry_suite`).
-- 100% `document.createElement` + `textContent` construction (zero `.innerHTML` DOM XSS).
+- 100% `document.createElement` + `textContent` construction (zero raw HTML string DOM XSS).
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ def build_telemetry_cockpit_css() -> str:
       background: var(--bg-1);
       border: 1px solid var(--hairline);
       box-shadow: var(--specular);
-      border-radius: 16px;
+      border-radius: var(--r-card);
       padding: 16px;
       display: grid;
       gap: 12px;
@@ -46,7 +46,7 @@ def build_telemetry_cockpit_css() -> str:
       gap: 8px;
       background: var(--bg-2);
       border: 1px solid var(--hairline);
-      border-radius: 12px;
+      border-radius: var(--r-control);
       padding: 12px;
       min-width: 0;
     }
@@ -57,7 +57,7 @@ def build_telemetry_cockpit_css() -> str:
       min-height: 34px;
       background: var(--bg-0);
       border: 1px solid var(--border-control);
-      border-radius: 10px;
+      border-radius: var(--r-control);
       padding: 6px 10px;
       color: var(--ink-0);
       font-family: var(--font-mono);
@@ -68,7 +68,7 @@ def build_telemetry_cockpit_css() -> str:
       display: inline-flex;
       align-items: center;
       padding: 3px 9px;
-      border-radius: 999px;
+      border-radius: var(--r-pill);
       border: 1px solid var(--border-control);
       font-family: var(--font-mono);
       font-size: 10.5px;
@@ -81,7 +81,7 @@ def build_telemetry_cockpit_css() -> str:
     .tele-pill.crit { color: var(--danger); border-color: color-mix(in oklch, var(--danger) 50%, transparent); }
     .tele-skel {
       height: 38px;
-      border-radius: 10px;
+      border-radius: var(--r-control);
       background: var(--bg-2);
       border: 1px solid var(--hairline);
       opacity: 0.7;
@@ -168,7 +168,7 @@ def build_telemetry_cockpit_js() -> str:
         if (err && err.name === 'AbortError') {
           teleError = 'Evaluation cancelled by user — click Refresh Cockpit to reload.';
         } else {
-          teleError = (err && err.message ? err.message : String(err)) + ' — Verify Agent Daemon (:8796) is running.';
+          teleError = (err && err.message ? err.message : String(err)) + ' — Verify Luminara Agent Daemon is running.';
         }
       } finally {
         teleLoading = false;
@@ -219,7 +219,7 @@ def build_telemetry_cockpit_js() -> str:
       const suiteSel = el('select', '');
       suiteSel.id = 'teleSuiteSelect';
       suiteSel.setAttribute('aria-label', 'Evaluation suite');
-      suiteSel.style.cssText = 'min-height:32px;padding:4px 8px;border-radius:8px;background:var(--bg-2);color:var(--ink-0);border:1px solid var(--border-control);font-family:var(--font-mono);font-size:11px;';
+      suiteSel.style.cssText = 'min-height:32px;padding:4px 8px;border-radius:var(--r-control);background:var(--bg-2);color:var(--ink-0);border:1px solid var(--border-control);font-family:var(--font-mono);font-size:11px;';
       ['extraction', 'citation', 'widesearch_mini'].forEach(s => {
         const opt = el('option', '', s);
         opt.value = s;

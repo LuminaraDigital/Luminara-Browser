@@ -28,9 +28,12 @@ ungoogled-chromium-windows/ungoogled-chromium/
 *.crx
 *.pak
 
-# Python / Node / Cloudflare local state
+# Python / Node / Cloudflare / Rust local state
 /build/
 /dist/
+luminara-shell/dist/
+desktop/target/
+*.res
 .venv/
 venv/
 __pycache__/
@@ -49,10 +52,22 @@ node_modules/
 !.env.example
 **/vault.json
 **/vault.key.json
+**/llm_config.json
+**/luminara-v4-config.json
+**/luminara-v4-state.json
 **/local_ui_key.txt
+**/install_manifest.json
+**/Logs/
 **/action_ledger.jsonl
 **/active_handoffs.json
+**/scheduled_tasks.json
+**/sequence_guard_state.json
+**/latest_genui.json
+**/casebundles/
 **/knowledge_graph.sqlite3*
 **/*.sqlite3*
+*.log
+*.pem
+*.key
 .DS_Store
 Thumbs.db

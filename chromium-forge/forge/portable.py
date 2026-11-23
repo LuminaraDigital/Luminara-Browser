@@ -6,12 +6,13 @@ Production-hardened portable bundler:
   dynamically at runtime so moving the folder to any drive or PC works immediately.
 - Fixes PowerShell backtick-quote `ParserError` (`& $chrome @argList @args`) and quotes every `.cmd` switch safely.
 - Generates PNG extension icons (`16`/`48`/`128`) and explicit MV3 `content_security_policy` on both extensions.
+- Re-brands `chrome.exe` window/taskbar icons with the Luminara emblem (`forge/exe_icon.py`, Windows hosts).
 """
 
 from __future__ import annotations
 
-import html
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -19,19 +20,21 @@ import socket
 import struct
 import subprocess
 import time
+import urllib.parse
 import zipfile
 
 from .cdp_client import CDPBridge, terminate_browser_process, wait_for_cdp_page_ready
+from .desktop_build import DESKTOP_EXE_NAME, inspect_pe_desktop_binary, stage_prebuilt_desktop_host
 from .downloads import extract_archive
+from .exe_icon import embed_app_icon
 from .http_base import atomic_write_private, ensure_local_ui_key
-from .luminara_copilot_ext import build_palette_js, make_solid_emerald_png, write_copilot_extension
+from .luminara_copilot_ext import _js_json, build_palette_js, write_copilot_extension
+from .luminara_shield_ext import write_shield_extension as _write_shield_extension
 from .luminara_ui import (
     build_luminara_newtab_html,
     build_luminara_workspace_html,
 )
 from .models import ForkProfile
-from .shield_compiler import build_deterministic_farbling_js, compile_dnr_shield_rules
-from .webmcp import WEBMCP_BOOTSTRAP_JS
 
 ENCODING = "utf-8"
 
@@ -53,7 +56,7 @@ def _build_initial_preferences(profile: ForkProfile, ntp_url: str) -> dict[str, 
             "check_default_browser": False,
             "clear_data_on_exit": profile.clear_data_on_exit,
         },
-        "bookmark_bar": {"show_on_all_tabs": True},
+        "bookmark_bar": {"show_on_all_tabs": False},
         "sync_promo": {"show_on_first_run_allowed": False},
         "signin": {"allowed": False, "allowed_on_next_startup": False},
         "search": {"suggest_enabled": False},
@@ -86,82 +89,36 @@ def _build_initial_preferences(profile: ForkProfile, ntp_url: str) -> dict[str, 
     }
 
 
-def _write_shield_extension(ext_dir: Path, profile: ForkProfile) -> None:
-    """Create MV3 Privacy Shield v3 extension (DNR tracker/query-param scrubber + deterministic farbling + WebMCP)."""
-    ext_dir.mkdir(parents=True, exist_ok=True)
+def _write_theme_extension(theme_dir: Path, profile: ForkProfile) -> None:
+    """Create MV3 Chromium theme extension styling window frame, toolbar, tabs, and omnibox in Warm Atelier Obsidian."""
+    theme_dir.mkdir(parents=True, exist_ok=True)
     from .luminara_logo3d import write_extension_icons
 
-    write_extension_icons(ext_dir)
-
-    rules = compile_dnr_shield_rules(profile)
-    (ext_dir / "rules.json").write_text(json.dumps(rules, indent=2) + "\n", encoding=ENCODING, newline="\n")
-    (ext_dir / "farble.js").write_text(build_deterministic_farbling_js(), encoding=ENCODING, newline="\n")
-    (ext_dir / "webmcp_bootstrap.js").write_text(WEBMCP_BOOTSTRAP_JS, encoding=ENCODING, newline="\n")
-
-    content_scripts: list[dict[str, object]] = []
-    if getattr(profile, "enable_shield_v3", True):
-        content_scripts.append(
-            {
-                "matches": ["http://*/*", "https://*/*"],
-                "js": ["farble.js"],
-                "run_at": "document_start",
-                "world": "MAIN",
-            }
-        )
-    if getattr(profile, "enable_webmcp", True):
-        content_scripts.append(
-            {
-                "matches": ["http://*/*", "https://*/*"],
-                "js": ["webmcp_bootstrap.js"],
-                "run_at": "document_start",
-                "world": "MAIN",
-            }
-        )
-
+    write_extension_icons(theme_dir)
     manifest: dict[str, object] = {
         "manifest_version": 3,
-        "name": f"{profile.brand_name} Privacy Shield v3",
-        "version": "3.1.0",
-        "description": f"Tracker/query-param DNR firewall (.{profile.trap_tld}), eTLD+1 deterministic farbling & W3C WebMCP.",
-        "permissions": ["declarativeNetRequest", "declarativeNetRequestWithHostAccess"],
-        "host_permissions": ["<all_urls>"],
+        "name": f"{profile.brand_name} Warm Atelier Theme",
+        "version": "4.0.0",
+        "description": "Warm Atelier Obsidian window frame, toolbar, tab text, and omnibox styling.",
         "icons": {"16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png"},
-        "content_security_policy": {
-            "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none';"
-        },
-        "declarative_net_request": {
-            "rule_resources": [{"id": "forge_trap_rules", "enabled": True, "path": "rules.json"}]
-        },
-        **({"content_scripts": content_scripts} if content_scripts else {}),
-        "action": {
-            "default_title": f"{profile.brand_name} Shield v3",
-            "default_popup": "popup.html",
-            "default_icon": {"16": "icons/icon16.png", "48": "icons/icon48.png"},
+        "theme": {
+            "colors": {
+                "frame": [20, 21, 25],
+                "frame_inactive": [17, 18, 22],
+                "toolbar": [26, 28, 34],
+                "tab_text": [246, 245, 240],
+                "tab_background_text": [143, 150, 165],
+                "tab_background_text_inactive": [143, 150, 165],
+                "bookmark_text": [181, 186, 198],
+                "toolbar_button_icon": [181, 186, 198],
+                "omnibox_background": [31, 34, 41],
+                "omnibox_text": [246, 245, 240],
+                "ntp_background": [20, 21, 25],
+                "ntp_text": [246, 245, 240],
+            }
         },
     }
-    (ext_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding=ENCODING, newline="\n")
-    popup = f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><meta name="color-scheme" content="dark light"><title>Shield v3</title><style>
-:root {{
-  color-scheme: dark light;
-  --bg: light-dark(oklch(0.985 0.004 255), oklch(0.145 0.012 255));
-  --ink: light-dark(oklch(0.16 0.015 255), oklch(0.96 0.006 255));
-  --muted: light-dark(oklch(0.45 0.018 255), oklch(0.71 0.015 255));
-  --accent: light-dark(oklch(0.47 0.14 162), oklch(0.75 0.16 162));
-}}
-body {{ width: 280px; margin: 0; padding: 14px; background: var(--bg); color: var(--ink); font: 12px/1.45 Consolas, monospace; font-variant-numeric: tabular-nums; }}
-.tag {{ color: var(--accent); font-weight: bold; margin-bottom: 6px; }}
-.muted {{ color: var(--muted); font-size: 11px; }}
-</style></head><body>
-<div class="tag">● {html.escape(profile.brand_name)} Shield v3</div>
-<div>Trap TLD: <b>.{html.escape(profile.trap_tld)}</b></div>
-<div>Active DNR Rules: <b>{len(rules)}</b> (Trackers + Param Scrub)</div>
-<div>Deterministic Farbling: <b>{"ON" if getattr(profile, "enable_shield_v3", True) else "OFF"}</b></div>
-<div>W3C WebMCP Runtime: <b>{"ON" if getattr(profile, "enable_webmcp", True) else "OFF"}</b></div>
-<div class="muted" style="margin-top:8px;">Search: {html.escape(profile.resolved_search_engine().name)} · CDP :{profile.cdp_port}</div>
-</body></html>
-"""
-    (ext_dir / "popup.html").write_text(popup, encoding=ENCODING, newline="\n")
+    (theme_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding=ENCODING, newline="\n")
 
 
 def _extract_inline_script_for_mv3(
@@ -194,6 +151,7 @@ def _write_offline_newtab_extension(
     profile: ForkProfile,
     newtab_html: str,
     workspace_html: str,
+    ui_key: str = "",
 ) -> None:
     """Create `< 8 ms` offline-first MV3 New Tab Override (`chrome_url_overrides.newtab`) + Alt+K Command Palette."""
     ext_dir.mkdir(parents=True, exist_ok=True)
@@ -208,27 +166,106 @@ def _write_offline_newtab_extension(
     (ext_dir / "workspace.html").write_text(ws_clean, encoding=ENCODING, newline="\n")
     (ext_dir / "workspace.js").write_text(ws_js, encoding=ENCODING, newline="\n")
 
-    newtab_bg_js = """chrome.runtime.onMessage.addListener((msg) => {
-  if (msg && typeof msg.luminaraOpenPage === 'string') {
-    const allowed = ['workspace.html', 'workspace.html#view=telemetry', 'newtab.html'];
-    if (allowed.includes(msg.luminaraOpenPage)) {
-      chrome.tabs.create({ url: chrome.runtime.getURL(msg.luminaraOpenPage) });
-    }
-  }
-});
+    daemon_base = f"http://127.0.0.1:{profile.agent_port}"
+    newtab_bg_js = f"""const DAEMON = {_js_json(daemon_base)};
+const UI_KEY = {_js_json(ui_key)};
+const ALLOWED_PAGES = new Set([
+  'workspace.html',
+  'workspace.html#view=telemetry',
+  'workspace.html#view=comparison',
+  'newtab.html',
+  'newtab.html#inbox',
+  'newtab.html#routines',
+  'newtab.html#setup',
+]);
+
+function isAllowedInternalPage(page) {{
+  if (ALLOWED_PAGES.has(page)) return true;
+  return page.startsWith('newtab.html#ask=') && page.length <= 1200 && !/[\\r\\n<>]/.test(page);
+}}
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {{
+  if (msg && typeof msg.luminaraOpenPage === 'string') {{
+    if (isAllowedInternalPage(msg.luminaraOpenPage)) {{
+      chrome.tabs.create({{ url: chrome.runtime.getURL(msg.luminaraOpenPage) }});
+      sendResponse({{ ok: true }});
+    }} else {{
+      sendResponse({{ ok: false, error: 'Page not permitted' }});
+    }}
+    return false;
+  }}
+  if (msg && msg.luminaraApi && typeof msg.luminaraApi.path === 'string') {{
+    const req = msg.luminaraApi;
+    if (!req.path.startsWith('/api/agent/') || req.path.includes('..')) {{
+      sendResponse({{ ok: false, status: 400, error: 'Invalid API path' }});
+      return false;
+    }}
+    const isPost = req.body !== undefined;
+    const headers = {{}};
+    if (UI_KEY) headers['X-Luminara-UI-Key'] = UI_KEY;
+    if (isPost) headers['Content-Type'] = 'application/json';
+    const timeoutMs = Math.max(1000, Math.min(30000, Number(req.timeoutMs) || 8000));
+    fetch(DAEMON + req.path, {{
+      method: isPost ? 'POST' : 'GET',
+      headers,
+      body: isPost ? JSON.stringify(req.body) : undefined,
+      signal: AbortSignal.timeout(timeoutMs),
+    }})
+      .then(async (r) => {{
+        const data = await r.json().catch(() => ({{}}));
+        sendResponse({{ ok: r.ok, status: r.status, data, error: r.ok ? '' : (data.error || ('HTTP ' + r.status)) }});
+      }})
+      .catch((err) => {{
+        sendResponse({{ ok: false, status: 0, data: {{}}, error: (err && err.message) ? err.message : String(err) }});
+      }});
+    return true;
+  }}
+  return false;
+}});
 """
     (ext_dir / "newtab_bg.js").write_text(newtab_bg_js, encoding=ENCODING, newline="\n")
-    palette_js = build_palette_js(profile.resolved_search_engine().search_url, agent_port=profile.agent_port) + "\n"
+    engine = profile.resolved_search_engine()
+    palette_js = build_palette_js(engine.search_url, agent_port=profile.agent_port) + "\n"
     (ext_dir / "palette.js").write_text(palette_js, encoding=ENCODING, newline="\n")
-    manifest = {
+
+    parsed_search = urllib.parse.urlparse(engine.search_url)
+    valid_search_provider = (
+        engine.key != "nosearch"
+        and parsed_search.scheme in ("http", "https")
+        and bool(parsed_search.netloc)
+        and "{searchTerms}" not in parsed_search.netloc
+        and "{searchTerms}" in engine.search_url
+    )
+    settings_override: dict[str, object] = {}
+    if valid_search_provider:
+        favicon_url = (
+            engine.favicon_url
+            if engine.favicon_url.startswith(("http://", "https://"))
+            else f"{parsed_search.scheme}://{parsed_search.netloc}/favicon.ico"
+        )
+        settings_override = {
+            "chrome_settings_overrides": {
+                "search_provider": {
+                    "name": engine.name,
+                    "keyword": engine.keyword,
+                    "search_url": engine.search_url,
+                    "favicon_url": favicon_url,
+                    "encoding": "UTF-8",
+                    "is_default": True,
+                }
+            }
+        }
+
+    manifest: dict[str, object] = {
         "manifest_version": 3,
-        "name": f"{profile.brand_name} Command Deck & Palette",
-        "version": "3.1.0",
-        "description": "Zero-cold-start offline-first New Tab Command Deck + Alt+K / Ctrl+Shift+K Command Palette.",
+        "name": f"{profile.brand_name} Calm Home & Palette",
+        "version": "4.0.0",
+        "description": "Instant-open Calm Home, private omnibox search provider, and Alt+K / Ctrl+Shift+K Interactive Command Palette.",
         "chrome_url_overrides": {"newtab": "newtab.html"},
+        **settings_override,
         "background": {"service_worker": "newtab_bg.js"},
         "permissions": ["storage"],
-        "host_permissions": [f"http://127.0.0.1:{profile.agent_port}/*"],
+        "host_permissions": [f"{daemon_base}/*"],
         "icons": {"16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png"},
         "content_security_policy": {
             "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none';"
@@ -236,6 +273,7 @@ def _write_offline_newtab_extension(
         "content_scripts": [
             {
                 "matches": ["http://*/*", "https://*/*"],
+                "exclude_matches": [f"{daemon_base}/*"],
                 "js": ["palette.js"],
                 "run_at": "document_idle",
             }
@@ -298,7 +336,7 @@ def _bundle_portable_agent_runtime(
     dst_pkg = agent_dir / "forge"
     if dst_pkg.exists():
         shutil.rmtree(dst_pkg)
-    shutil.copytree(src_pkg, dst_pkg, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "luminara-logo.png"))
+    shutil.copytree(src_pkg, dst_pkg, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "luminara-logo.png", "*.ico"))
     profile.save(agent_dir / "fork.json")
     out_dir = agent_dir / "outputs"
     if release_scrub and out_dir.exists():
@@ -336,6 +374,8 @@ def assemble_portable_distribution(
     _seed_or_extract_chromium_runtime(portable_zip, dist_root, app_dir)
     if not chrome_exe.exists():
         raise FileNotFoundError(f"chrome.exe missing after runtime preparation in {app_dir}")
+    if os.name == "nt":
+        embed_app_icon(chrome_exe)
 
     _bundle_portable_agent_runtime(resolved_forge, target_dir, profile, ui_key, release_scrub=release_scrub)
 
@@ -376,8 +416,10 @@ def assemble_portable_distribution(
     shield_dir = app_dir / "extensions" / "forge-shield"
     copilot_dir = app_dir / "extensions" / "luminara-copilot"
     newtab_ext_dir = app_dir / "extensions" / "luminara-newtab"
-    _write_shield_extension(shield_dir, profile)
-    _write_offline_newtab_extension(newtab_ext_dir, profile, newtab_html, workspace_html)
+    theme_dir = app_dir / "extensions" / "luminara-theme"
+    _write_shield_extension(shield_dir, profile, ui_key=ui_key)
+    _write_offline_newtab_extension(newtab_ext_dir, profile, newtab_html, workspace_html, ui_key=ui_key)
+    _write_theme_extension(theme_dir, profile)
     write_copilot_extension(
         copilot_dir,
         profile,
@@ -392,8 +434,11 @@ def assemble_portable_distribution(
     (app_dir / "initial_preferences").write_text(prefs_payload, encoding=ENCODING, newline="\n")
     (app_dir / "master_preferences").write_text(prefs_payload, encoding=ENCODING, newline="\n")
 
-    if release_scrub and profile_dir.exists():
-        shutil.rmtree(profile_dir)
+    if release_scrub:
+        for scrub_dir in (profile_dir, target_dir / "Logs"):
+            if scrub_dir.exists():
+                shutil.rmtree(scrub_dir)
+        (target_dir / "install_manifest.json").unlink(missing_ok=True)
     profile_dir.mkdir(parents=True, exist_ok=True)
     switches = list(profile.runtime_switches())
     if profile.enable_agent_cobrowsing:
@@ -460,7 +505,7 @@ if ($activeKey.Length -ge 32) {{
   [System.IO.File]::WriteAllText((Join-Path $homeLumDir 'local_ui_key.txt'), ($activeKey + "`n"), [System.Text.UTF8Encoding]::new($false))
   $jsSafeKey = $activeKey.Replace('\\', '\\\\').Replace('"', '\\"')
   $rxSafeKey = $jsSafeKey.Replace('$', '$$')
-  foreach ($rel in @('App\\luminara_pages\\newtab.html', 'App\\luminara_pages\\workspace.html', 'App\\forge_ntp\\index.html', 'App\\extensions\\luminara-copilot\\sidepanel.js', 'App\\extensions\\luminara-newtab\\newtab.js', 'App\\extensions\\luminara-newtab\\workspace.js')) {{
+  foreach ($rel in @('App\\luminara_pages\\newtab.html', 'App\\luminara_pages\\workspace.html', 'App\\forge_ntp\\index.html', 'App\\extensions\\luminara-copilot\\sidepanel.js', 'App\\extensions\\luminara-newtab\\newtab.js', 'App\\extensions\\luminara-newtab\\workspace.js', 'App\\extensions\\luminara-newtab\\newtab_bg.js', 'App\\extensions\\forge-shield\\popup.js')) {{
     $p = Join-Path $root $rel
     if (Test-Path -LiteralPath $p) {{
       $rawTxt = [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8)
@@ -500,7 +545,8 @@ if ({cobrowse_ps} -and $pyCmd) {{
 $extShield = Join-Path $root 'App\\extensions\\forge-shield'
 $extCopilot = Join-Path $root 'App\\extensions\\luminara-copilot'
 $extNewtab = Join-Path $root 'App\\extensions\\luminara-newtab'
-$extList = if ({cobrowse_ps}) {{ @($extShield, $extCopilot, $extNewtab) -join ',' }} else {{ @($extShield, $extNewtab) -join ',' }}
+$extTheme = Join-Path $root 'App\\extensions\\luminara-theme'
+$extList = if ({cobrowse_ps}) {{ @($extShield, $extCopilot, $extNewtab, $extTheme) -join ',' }} else {{ @($extShield, $extNewtab, $extTheme) -join ',' }}
 $chrome = Join-Path $root 'App\\chrome.exe'
 $argList = @(
   ("--user-data-dir=" + (Join-Path $root 'Profile')),
@@ -514,22 +560,64 @@ Start-Process -FilePath $chrome -ArgumentList $quotedArgs
 """
     ps1_launcher.write_text(ps1_body, encoding=ENCODING, newline="\n")
 
-    # `.cmd` delegates cleanly to `.ps1` (resolving all paths relative to `%~dp0` with zero quote/space bugs!)
+    # `.cmd` prefers native zero-console `LuminaraBrowser.exe`, delegates to `.ps1`, or launches `chrome.exe` with all extensions.
+    staged_host = stage_prebuilt_desktop_host(resolved_forge, target_dir, auto_build=True)
+    host_pe = inspect_pe_desktop_binary(staged_host) if staged_host is not None else {"present": False}
+
+    cmd_ext_parts = [
+        r"%~dp0App\extensions\forge-shield",
+        *( [r"%~dp0App\extensions\luminara-copilot"] if profile.enable_agent_cobrowsing else [] ),
+        r"%~dp0App\extensions\luminara-newtab",
+        r"%~dp0App\extensions\luminara-theme",
+    ]
+    cmd_ext_arg = ",".join(cmd_ext_parts)
+    cmd_switches_str = " ".join(f'"{sw}"' for sw in switches)
     cmd_launcher = target_dir / f"Launch-{profile.slug}.cmd"
     cmd_body = "\r\n".join(
         [
             "@echo off",
             "setlocal",
-            f'powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Launch-{profile.slug}.ps1" %*',
+            f'set "LUM_EXTENSIONS={cmd_ext_arg}"',
+            r'set "LUM_UI_SYNC_FILES=App\luminara_pages\newtab.html;App\luminara_pages\workspace.html;App\forge_ntp\index.html;App\extensions\luminara-copilot\sidepanel.js;App\extensions\luminara-newtab\newtab.js;App\extensions\luminara-newtab\workspace.js;App\extensions\luminara-newtab\newtab_bg.js;App\extensions\forge-shield\popup.js"',
+            f'if exist "%~dp0{DESKTOP_EXE_NAME}" (',
+            f'  start "" "%~dp0{DESKTOP_EXE_NAME}" %*',
+            "  exit /b 0",
+            ")",
+            "where powershell >nul 2>&1",
+            "if %errorlevel%==0 (",
+            f'  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Launch-{profile.slug}.ps1" %*',
+            "  exit /b 0",
+            ")",
+            f'start "" "%~dp0App\\chrome.exe" "--user-data-dir=%~dp0Profile" "--load-extension=%LUM_EXTENSIONS%" {cmd_switches_str} "{default_home_url}" %*',
             "",
         ]
     )
     cmd_launcher.write_bytes(cmd_body.encode(ENCODING))
 
+    install_cmd = target_dir / "Install-Luminara-Browser.cmd"
+    install_cmd_body = "\r\n".join(
+        [
+            "@echo off",
+            "setlocal",
+            f'if exist "%~dp0{DESKTOP_EXE_NAME}" (',
+            f'  start "" "%~dp0{DESKTOP_EXE_NAME}" --install %*',
+            "  exit /b 0",
+            ")",
+            "echo [Luminara Browser] Native desktop host not found. Run: python -m forge build-desktop",
+            "pause",
+            "exit /b 1",
+            "",
+        ]
+    )
+    install_cmd.write_bytes(install_cmd_body.encode(ENCODING))
+
     pe_info = inspect_pe_machine_header(chrome_exe)
     return {
         "dist_dir": str(target_dir),
         "chrome_exe": str(chrome_exe),
+        "desktop_host_exe": str(staged_host) if staged_host is not None else "",
+        "desktop_host_pe": host_pe,
+        "install_cmd": str(install_cmd),
         "cmd_launcher": str(cmd_launcher),
         "ps1_launcher": str(ps1_launcher),
         "ntp_file": str(newtab_file),
@@ -539,6 +627,7 @@ Start-Process -FilePath $chrome -ArgumentList $quotedArgs
         "shield_extension": str(shield_dir),
         "copilot_extension": str(copilot_dir),
         "newtab_extension": str(newtab_ext_dir),
+        "theme_extension": str(theme_dir),
         "cdp_port": profile.cdp_port,
         "agent_port": profile.agent_port,
         "pe_evidence": pe_info,

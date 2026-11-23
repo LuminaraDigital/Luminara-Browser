@@ -453,6 +453,7 @@ luminara.emit({"clicked": len(snap["snapshot"]["elements"]), "ext_ok": ext["ok"]
                 self.assertIn(expected_tool, tool_names)
 
             # Verify skill markdown resource URIs and CLI flags never drift from agent_server.py
+            import os
             import re
             import subprocess
             import sys
@@ -467,11 +468,27 @@ luminara.emit({"clicked": len(snap["snapshot"]["elements"]), "ext_ok": ext["ok"]
                 found_uris = set(re.findall(r"luminara://[a-z0-9_/-]+", doc.read_text(encoding="utf-8")))
                 self.assertEqual(found_uris, valid_uris, f"Resource URI mismatch in {doc}")
 
-            ctl_help = subprocess.check_output(
-                [sys.executable, str(repo_root / "skills" / "luminara-browser" / "scripts" / "luminara_ctl.py"), "pipeline", "--help"],
-                text=True,
-            )
+            ctl_script = repo_root / "skills" / "luminara-browser" / "scripts" / "luminara_ctl.py"
+            ctl_help = subprocess.check_output([sys.executable, str(ctl_script), "pipeline", "--help"], text=True)
             self.assertIn("--script", ctl_help)
+            for subcmd in ("desktop-status", "takeover"):
+                sub_help = subprocess.check_output([sys.executable, str(ctl_script), subcmd, "--help"], text=True)
+                self.assertIn("--human-auth", sub_help)
+
+            skill_src = repo_root / "skills" / "luminara-browser"
+            local_app = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+            for ext_root in (
+                Path.home() / ".gemini" / "config" / "skills" / "luminara-browser",
+                Path.home() / ".hermes" / "skills" / "luminara-browser",
+                local_app / "hermes" / "skills" / "luminara-browser",
+            ):
+                if ext_root.is_dir():
+                    for rel in ("SKILL.md", "scripts/luminara_ctl.py", "references/mcp-protocol.md"):
+                        self.assertEqual(
+                            (ext_root / rel).read_bytes(),
+                            (skill_src / rel).read_bytes(),
+                            f"External skill root drifted: {ext_root / rel}",
+                        )
 
             # Test vault register & list through LuminaraAgentRuntime.dispatch_tool
             reg = rt.dispatch_tool(
@@ -511,6 +528,10 @@ luminara.emit({"clicked": len(snap["snapshot"]["elements"]), "ext_ok": ext["ok"]
             *sorted((forge_root / "tests").glob("*.py")),
             *sorted((repo_root / "skills" / "luminara-browser").rglob("*")),
             *sorted((repo_root / "cloudflare").rglob("*")),
+            repo_root / "desktop" / "Cargo.toml",
+            repo_root / "desktop" / "build.rs",
+            repo_root / "desktop" / "luminara.manifest",
+            *sorted((repo_root / "desktop" / "src").glob("*.rs")),
         ]
         for fpath in scan_files:
             if not fpath.is_file() or fpath.name == "test_luminara_core_pillars.py":

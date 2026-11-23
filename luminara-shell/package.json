@@ -1,0 +1,30 @@
+{
+  "name": "luminara-shell",
+  "version": "4.0.0",
+  "description": "Luminara Browser v4 Native Desktop Browser Shell — Warm Atelier Precision x Calm Spatial OS with 60/120fps Chromium WebContentsView tabs and PiBot Multi-Agent OS",
+  "private": true,
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build:main": "node scripts/build-main.mjs",
+    "build:renderer": "vite build",
+    "build": "npm run build:main && npm run build:renderer",
+    "typecheck": "tsc --noEmit",
+    "start": "electron .",
+    "dev": "npm run build && electron .",
+    "smoke": "node scripts/smoke-test.mjs"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.4.1",
+    "electron": "^35.1.5",
+    "esbuild": "^0.25.2",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.2"
+  }
+}

@@ -10,12 +10,12 @@ Luminara's versions are original code (MIT). Evidence paths are in `Evidence_Led
 |---|---|---|
 | Element identity | Refs stable per document, recovered after re-render | **Built in tranche 1** (was per-snapshot indices) |
 | "What changed?" | Outline diff after every action | **Built in tranche 1** (had none) |
-| Waiting | DOM-mutation settle, no fixed sleeps | **Built in tranche 1** as a tool; goal loop still sleeps |
+| Waiting | DOM-mutation settle, no fixed sleeps | **Built in tranches 1–2**: tool, and the goal loop after scroll/click/type |
 | Injection defence | Per-call nonce fence on page text | **Built in tranche 1** for outline output; older tools still use a static tag |
 | Scheduled tasks | Daily/hourly via extension alarms | **Built in tranche 1** (interval/daily, human-gated) |
 | Screenshot tool | MCP tool | **Built in tranche 1** (was REST only) |
 | Tabs/windows/groups, bookmarks, history | Custom CDP domains patched into Chromium | Missing; needs C++ patches or the side-panel extension |
-| Takeover | Input shield + overlay + heartbeat, refuse-once guard | Lease preemption and a HUD pill only |
+| Takeover | Input shield + overlay + heartbeat, refuse-once guard | **Built in tranche 2** (was lease preemption and a HUD pill) |
 | Code-mode `run` tool | Sandboxed JS SDK | Has an equivalent: AST-checked Python pipeline |
 | Learned automations | Per-host helpers, verified flows with commit step | Has playbooks; no verify gates or commit marking |
 | Connectors / external MCP | Hosted connector service + custom MCP client | Missing (server only) |
@@ -44,13 +44,28 @@ Deliberate differences from the target:
 
 Not verified: none of tranche 1 has run against a live Chromium. The tests use a mocked CDP bridge.
 
+## Tranche 2 — built and tested (including against headless Chromium)
+
+| Part | File | What it does |
+|---|---|---|
+| Presence shield | `chromium-forge/forge/presence.py` | Banner naming the agent; the person's clicks and keys are held between agent actions; "Take over" button or Escape hands the tab back; clears itself 20 s after the agent's last action |
+| Refuse-once guard | `TabLeaseManager` in `chromium-forge/forge/cdp_client.py` | After a takeover, the interrupted agent's next page-changing call on that tab fails once with a clear message, then proceeds |
+| Goal loop | `chromium-forge/forge/agent_engine.py` | Settles instead of sleeping; a takeover mid-run ends the goal as `STOPPED_HUMAN_TAKEOVER` |
+| Tests | `chromium-forge/tests/test_luminara_presence.py` | 3 unit tests + 1 live test |
+
+Deliberate differences from the target:
+
+- The shield runs in the page's own script world, not an isolated one. A page can therefore remove it or
+  fake a takeover, but both only unblock the person or stop the agent, so the failure direction is safe.
+- Only the agent that was actually interrupted is refused. Refusing every agent broke the existing
+  takeover-then-act obligation (OBL-09/10).
+- While the agent's 1.5 s action window is open the person's input also passes.
+
 ## Next tranches (ordered by value per effort)
 
-1. **Use tranche 1 inside the goal loop** — replace the fixed 0.25/0.30 s sleeps with settle, feed the
-   outline diff to the planner instead of a fresh 40-element snapshot. (S)
-2. **Takeover shield** — isolated-world overlay with heartbeat that blocks the person's input while the
-   agent acts and clears itself if the daemon dies; after takeover, refuse the agent's next page-changing
-   call once. (M)
+1. **Feed the outline diff to the planner** instead of a fresh 40-element snapshot each step. (M)
+2. **Shield heartbeat for long goals** — refresh while the model is thinking, so a slow model does not let
+   the shield lapse after 20 s. (S)
 3. **Browser-state tools without C++** — bookmarks, history, tab groups, windows through the existing MV3
    side-panel extension (`chrome.bookmarks`, `chrome.history`, `chrome.tabGroups`, `chrome.windows`),
    bridged to the daemon. (M)

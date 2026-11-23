@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "luminara-browser-forge"
-version = "3.1.0"
-description = "Zero-dependency Chromium/Ungoogled-Chromium 100x Forge, Multiplexed CDP + AXTree + W3C WebMCP Daemon, DPAPI/AEAD Vault, Network Mutation Firewall, Numbat Sequence Guard, Hermetic VRT, Fenced Monitors, FTS5 Workspaces, and 28-Tool MCP v2 Server."
+version = "4.0.0"
+description = "Zero-dependency Chromium/Ungoogled-Chromium v4 Forge, Multiplexed CDP + AXTree + W3C WebMCP Daemon, PiBot Multi-Bot Team Hub, DPAPI/AEAD Vault, Network Mutation Firewall, Numbat Sequence Guard, Hermetic VRT, Fenced Monitors, FTS5 Workspaces, Warm Atelier UI, and 28-Tool MCP v2 Server."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
@@ -22,4 +22,4 @@ package-dir = {"" = "chromium-forge"}
 packages = ["forge"]
 
 [tool.setuptools.package-data]
-forge = ["ui/*.html", "ui/*.png", "ui/*.webp", "patches/luminara/*", "rea_evidence/*.json"]
+forge = ["ui/*.html", "ui/*.png", "ui/*.webp", "ui/*.ico", "patches/luminara/*", "rea_evidence/*.json"]

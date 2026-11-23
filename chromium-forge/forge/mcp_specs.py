@@ -9,7 +9,7 @@ from .agent_tools_flow import MCP_TOOLS_FLOW_SPEC
 from .agent_tools_v31 import MCP_RESOURCES_V31_SPEC, MCP_TOOLS_V31_SPEC
 from .models import ForkProfile
 
-APP_VERSION = "3.1.0"
+APP_VERSION = "4.0.0"
 MCP_PROTOCOL_VERSION = "2025-06-18"
 
 MCP_RESOURCES_SPEC: list[dict[str, str]] = [
@@ -121,18 +121,39 @@ MCP_TOOLS_SPEC: list[dict[str, Any]] = [
 ]
 
 
+_V4_TEAM_HUB_ROUTES: tuple[str, ...] = (
+    "/api/agent/llm/config",
+    "/api/agent/llm/ollama",
+    "/api/agent/teams",
+    "/api/agent/chat",
+    "/api/agent/inbox",
+    "/api/agent/teach",
+    "/api/agent/tabs/focus",
+    "/api/agent/lens/compare",
+)
+
+_DESKTOP_LIFECYCLE_ROUTES: tuple[str, ...] = (
+    "/api/agent/desktop/status",
+    "/api/agent/desktop/takeover",
+    "/api/agent/shutdown",
+)
+
+
 def build_llms_txt(prof: ForkProfile, host: str, srv_port: int) -> str:
     tool_lines = [f"- `{t['name']}`: {t['description']}" for t in MCP_TOOLS_SPEC]
     res_lines = [f"- `{r['uri']}`: {r['name']}" for r in MCP_RESOURCES_SPEC]
     return "\n".join(
         [
-            f"# Luminara Browser v{APP_VERSION} — Dual Human + AI Agent Co-Browsing Engine",
-            f"> Ungoogled-Chromium {prof.chromium_version}-1.1 hardened desktop browser with Multiplexed Loopback CDP (<1.5ms RTT), Blink AXTree + Shadow-DOM + OOPIF perception, W3C WebMCP (`navigator.modelContext`), Network Mutation Firewall (`Fetch.enable`), DPAPI/AEAD Vault, SQLite FTS5 Workspaces, Tab Hibernation, and {len(MCP_TOOLS_SPEC)}-Tool MCP v2.",
+            f"# Luminara Browser v{APP_VERSION} — Dual Human + AI Agent Co-Browsing Engine & PiBot Team Hub",
+            f"> Ungoogled-Chromium {prof.chromium_version}-1.1 hardened desktop browser + Luminara v4 Desktop Shell (`luminara-shell` / `Launch-Luminara-v4.cmd`) with Warm Atelier Precision UI, PiBot Multi-Bot Teams (`Pi`, `Remy`, `Dana`, `Research Team`), Multiplexed Loopback CDP (<1.5ms RTT), Blink AXTree + Shadow-DOM + OOPIF perception, W3C WebMCP (`navigator.modelContext`), Network Mutation Firewall (`Fetch.enable`), DPAPI/AEAD Vault, SQLite FTS5 Workspaces, Tab Hibernation, and {len(MCP_TOOLS_SPEC)}-Tool MCP v2.",
             "",
             "## Agent Control Endpoints",
             f"- MCP v2 JSON-RPC (`{MCP_PROTOCOL_VERSION}`): `POST http://{host}:{srv_port}/api/agent/mcp`",
             f"- Agent Manifest: `GET http://{host}:{srv_port}/.well-known/agent.json`",
             f"- REST Base: `http://{host}:{srv_port}/api/agent/{{status,tabs,open,close,snapshot,act,frames,extract,genui,goal,bulk,handoff/resume,dialog,vault,pipeline,playbooks,perception,webmcp/list,webmcp/call,mutations,workspaces,hibernate,outline,wait,screenshot,schedule,sequences,vrt,monitors,eval,casebundles,receipts,ledger/verify}}`",
+            f"- v4 Team Hub REST Routes: `http://{host}:{srv_port}` → " + ", ".join(f"`{r}`" for r in _V4_TEAM_HUB_ROUTES),
+            f"- Desktop Lifecycle REST Routes: `http://{host}:{srv_port}` → " + ", ".join(f"`{r}`" for r in _DESKTOP_LIFECYCLE_ROUTES),
+            "- Native Desktop Launchers: `Launch-Luminara-v4.cmd` (`luminara-shell/` 3-Zone Spatial OS) and `LuminaraBrowser.exe` / `Launch-Luminara-Browser.cmd` (Ungoogled-Chromium + Win32 JobObject Supervisor)",
             "",
             f"## MCP v2 Tools ({len(MCP_TOOLS_SPEC)})",
             *tool_lines,
@@ -142,9 +163,9 @@ def build_llms_txt(prof: ForkProfile, host: str, srv_port: int) -> str:
             "",
             "## Co-Browsing & Safety Contract",
             "- Humans and AI agents share the exact same live browser window without exclusive F12 locks.",
-            "- Human takeover (`human_takeover`) immediately preempts any active agent tab lease.",
+            "- Human takeover (`human_takeover` / `/api/agent/desktop/takeover`) immediately preempts any active agent tab lease.",
             "- Login, MFA, payment, and verification gates return `PAUSED_HUMAN_HANDOFF` so the human completes them directly.",
-            "- All CDP/MCP outputs and `LUM-*` receipts scrub secrets via `LuminaraRedactor` and carry `LUM-SIG-V2` (`lum-hmac256:...`) signatures.",
+            "- All CDP/MCP outputs, Team Hub responses, and `LUM-*` receipts scrub secrets via `LuminaraRedactor` and carry `LUM-SIG-V2` (`lum-hmac256:...`) signatures.",
             "",
         ]
     )
@@ -156,10 +177,14 @@ def build_agent_manifest(prof: ForkProfile, host: str, srv_port: int, cdp_base_h
         "slug": "luminara-browser",
         "version": APP_VERSION,
         "chromium_base": f"{prof.chromium_version}-1.1",
+        "v4_desktop_shell": "luminara-shell (Launch-Luminara-v4.cmd)",
         "protocol": "mcp-v2",
         "mcp_protocol_version": MCP_PROTOCOL_VERSION,
         "mcp_endpoint": f"http://{host}:{srv_port}/api/agent/mcp",
         "rest_base": f"http://{host}:{srv_port}/api/agent",
+        "v4_team_hub_endpoints": list(_V4_TEAM_HUB_ROUTES),
+        "desktop_lifecycle_endpoints": list(_DESKTOP_LIFECYCLE_ROUTES),
+        "builtin_bots": ["pi", "remy", "dana", "team-research"],
         "ui_newtab": f"http://{host}:{srv_port}/newtab",
         "ui_workspace": f"http://{host}:{srv_port}/workspace",
         "cdp_target": cdp_base_http,

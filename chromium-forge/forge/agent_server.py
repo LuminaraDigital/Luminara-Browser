@@ -15,22 +15,18 @@ import os
 from pathlib import Path
 import secrets
 import threading
+import time
 from typing import Any
 import urllib.parse
 
+from .agent_desktop import build_desktop_heartbeat, initiate_graceful_shutdown, trigger_desktop_takeover
 from .agent_engine import ActionLedger, AgentGoalRunner, BulkEngine
-from .agent_tools_100x import MCP_TOOLS_100X_SPEC, _bool_opt, _int_opt, _require_str, dispatch_100x_tool
-from .agent_tools_flow import HUMAN_ONLY_ACTIONS, dispatch_flow_tool, run_scheduled_task
+from .agent_team_hub import TeamHub, handle_team_get, handle_team_post
+from .agent_tools_100x import _int_opt, dispatch_100x_tool
+from .agent_tools_core import dispatch_core_tool
+from .agent_tools_flow import dispatch_flow_tool, run_scheduled_task
 from .agent_tools_v31 import dispatch_v31_tool, requires_human_ui_key_v31
 from .cdp_client import CDPBridge, CDPError
-from .extractor import (
-    build_dialog_control_js,
-    build_dom_action_js,
-    build_dom_snapshot_js,
-    extract_structured_page,
-    format_extracted_rows,
-    synthesize_generative_ui,
-)
 from .http_base import LoopbackHTTPServer, LoopbackJSONHandler, atomic_write_private, ensure_local_ui_key, safe_join
 from .knowledge_graph import KnowledgeWorkspaceStore, TabLifecycleManager
 from .luminara_automation import PipelineSandboxRunner, PlaybookMemory
@@ -38,18 +34,15 @@ from .luminara_crypto import EphemeralSessionSigner
 from .luminara_security import DEFAULT_REDACTOR, LuminaraVault
 from .luminara_ui import build_luminara_newtab_html, build_luminara_workspace_html
 from .mcp_specs import (
-    APP_VERSION,
-    MCP_PROTOCOL_VERSION,
-    MCP_RESOURCES_SPEC,
-    MCP_TOOLS_SPEC,
-    build_agent_manifest,
-    build_llms_txt,
+    APP_VERSION, MCP_PROTOCOL_VERSION, MCP_RESOURCES_SPEC, MCP_TOOLS_SPEC,
+    build_agent_manifest, build_llms_txt,
 )
 from .models import ForkProfile
 from .monitors_eval import MonitorEvalEngine
 from .mutation_firewall import NetworkMutationFirewall
 from .perception import HybridPerceptionEngine
 from .perception_refs import OutlinePerception
+from .presence import PresenceShield
 from .scheduler import ScheduledTaskStore, ScheduleRunner
 from .sequence_guard import SequenceGuard
 from .vrt_isolation import VRTIsolationManager
@@ -86,29 +79,20 @@ class LuminaraAgentRuntime:
         self.knowledge = KnowledgeWorkspaceStore(self.outputs_dir / "knowledge_graph.sqlite3", redactor=self.redactor)
         self.lifecycle = TabLifecycleManager(self.cdp)
         self.bulk = BulkEngine(self.cdp, self.ledger, self.outputs_dir / "checkpoints")
-        self.goals = AgentGoalRunner(
-            self.cdp,
-            self.ledger,
-            self.outputs_dir / "active_handoffs.json",
-            playbooks=self.playbooks,
-        )
+        self.goals = AgentGoalRunner(self.cdp, self.ledger, self.outputs_dir / "active_handoffs.json", playbooks=self.playbooks)
         self.pipeline = PipelineSandboxRunner(self.dispatch_tool)
         self.outline = OutlinePerception(self.cdp)
+        self.presence = PresenceShield(self.cdp, self.cdp.leases)
+        self.cdp.leases.on_action = self.presence.hold
         self.schedules = ScheduledTaskStore(self.outputs_dir / "scheduled_tasks.json")
         self.sequence_guard = SequenceGuard(self.outputs_dir, redactor=self.redactor, signer=self.signer)
         self.vrt_isolation = VRTIsolationManager(self.cdp, self.outputs_dir / "vrt_baselines", redactor=self.redactor)
         self.monitors_eval = MonitorEvalEngine(
-            self.outputs_dir / "monitors_eval.sqlite3",
-            cdp=self.cdp,
-            ledger=self.ledger,
-            playbooks=self.playbooks,
-            redactor=self.redactor,
+            self.outputs_dir / "monitors_eval.sqlite3", cdp=self.cdp, ledger=self.ledger, playbooks=self.playbooks, redactor=self.redactor
         )
-        self.scheduler = ScheduleRunner(
-            self.schedules,
-            lambda task: run_scheduled_task(self, task),
-            on_tick=lambda: self.monitors_eval.run_due_monitors(),
-        )
+        self.scheduler = ScheduleRunner(self.schedules, lambda task: run_scheduled_task(self, task), on_tick=lambda: self.monitors_eval.run_due_monitors())
+        self.team_hub = TeamHub(self)
+        self.goals.router.llm_config_getter = self.team_hub.llm_config.get_runtime_config
         self.passport_token = os.environ.get("LUMINARA_AGENT_TOKEN", "").strip()
         if self.passport_token:
             self.redactor.register_secret(self.passport_token)
@@ -152,14 +136,7 @@ class LuminaraAgentRuntime:
         with self._genui_lock:
             return self.redactor.redact_payload(self.latest_genui) if self.latest_genui is not None else None
 
-    def _index_extracted_rows(
-        self,
-        args: dict[str, Any],
-        url: str,
-        title: str,
-        rows: list[dict[str, Any]] | None,
-        receipt_id: str = "",
-    ) -> None:
+    def _index_extracted_rows(self, args: dict[str, Any], url: str, title: str, rows: list[dict[str, Any]] | None, receipt_id: str = "") -> None:
         if rows:
             self.knowledge.index_entities(
                 workspace_id=str(args.get("workspace_id") or "default"),
@@ -224,26 +201,15 @@ class LuminaraAgentRuntime:
                     if m.get("monitor_id") == mid and m.get("target_url"):
                         return str(m["target_url"])
         if name in (
-            "browser_snapshot",
-            "browser_perception_axtree",
-            "browser_extract_structured",
-            "browser_generative_ui",
-            "webmcp_list_tools",
-            "webmcp_call_tool",
-            "browser_act",
-            "browser_outline",
-            "browser_dialog",
-            "browser_vault",
-            "browser_run_goal",
-            "browser_playbooks",
-            "browser_exec_pipeline",
+            "browser_snapshot", "browser_perception_axtree", "browser_extract_structured", "browser_generative_ui",
+            "webmcp_list_tools", "webmcp_call_tool", "browser_act", "browser_outline",
+            "browser_dialog", "browser_vault", "browser_run_goal", "browser_playbooks", "browser_exec_pipeline",
         ):
             return self._active_tab_url(args.get("target_id"))
         return ""
 
     def dispatch_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
-        out = self._dispatch_tool_raw(name, args)
-        return self.redactor.redact_payload(out)
+        return self.redactor.redact_payload(self._dispatch_tool_raw(name, args))
 
     def _dispatch_tool_raw(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         agent_id = str(args.get("agent_id") or "luminara-agent")
@@ -251,20 +217,11 @@ class LuminaraAgentRuntime:
             latched = self.sequence_guard.active_daemon_block()
             if latched is not None:
                 rec = self.ledger.record(
-                    agent_id,
-                    "sequence_block",
-                    str(args.get("target_id") or ""),
+                    agent_id, "sequence_block", str(args.get("target_id") or ""),
                     {"blocked_tool": name, "status": "PAUSED_SEQUENCE_BLOCK"},
-                    status="BLOCKED",
-                    summary=f"SequenceGuard latched block rejected {name} (PAUSED_SEQUENCE_BLOCK)",
+                    status="BLOCKED", summary=f"SequenceGuard latched block rejected {name} (PAUSED_SEQUENCE_BLOCK)",
                 )
-                return {
-                    "ok": False,
-                    "blocked": True,
-                    "status": "PAUSED_SEQUENCE_BLOCK",
-                    "findings": [latched],
-                    "receipt": rec,
-                }
+                return {"ok": False, "blocked": True, "status": "PAUSED_SEQUENCE_BLOCK", "findings": [latched], "receipt": rec}
             seq_urls = (
                 [str(u).strip() for u in args["urls"] if isinstance(u, str) and u.strip()]
                 if (name == "browser_bulk_extract" and isinstance(args.get("urls"), list))
@@ -275,355 +232,19 @@ class LuminaraAgentRuntime:
             for eval_u in seq_urls:
                 step_params = {**args, "url": eval_u} if (len(seq_urls) > 1 and eval_u) else args
                 seq_chk = self.sequence_guard.evaluate_step(
-                    agent_id=agent_id,
-                    tool_name=name,
-                    params=step_params,
-                    target_url=eval_u,
-                    workspace_id=str(args.get("workspace_id") or "default"),
+                    agent_id=agent_id, tool_name=name, params=step_params,
+                    target_url=eval_u, workspace_id=str(args.get("workspace_id") or "default"),
                 )
                 if seq_chk.get("blocked"):
                     rec = self.ledger.record(
-                        agent_id,
-                        "sequence_block",
-                        str(args.get("target_id") or ""),
+                        agent_id, "sequence_block", str(args.get("target_id") or ""),
                         {"blocked_tool": name, "status": "PAUSED_SEQUENCE_BLOCK"},
-                        status="BLOCKED",
-                        summary=f"SequenceGuard blocked {name} (PAUSED_SEQUENCE_BLOCK)",
+                        status="BLOCKED", summary=f"SequenceGuard blocked {name} (PAUSED_SEQUENCE_BLOCK)",
                     )
                     return {**seq_chk, "receipt": rec}
-        if name == "browser_list_tabs":
-            connected = self.cdp.is_alive()
-            tabs = self.cdp.list_tabs() if connected else []
-            return {"cdp_connected": connected, "cdp_port": self.cdp.port, "tabs": tabs}
-
-        if name == "browser_open_tab":
-            url = _require_str(args, "url")
-            bg = _bool_opt(args, "background", True)
-            tab = self.cdp.open_tab(url, background=bg)
-            self.lifecycle.touch_tab(tab["target_id"])
-            if self.current_profile().guard_network_mutations:
-                try:
-                    self.mutation_firewall.enable_guard(tab["target_id"])
-                except Exception:  # noqa: BLE001
-                    pass
-            rec = self.ledger.record(agent_id, "open_tab", tab["target_id"], {"url": url, "background": bg}, summary=f"Opened {url}")
-            return {"tab": tab, "receipt": rec}
-
-        if name == "browser_close_tab":
-            tid = _require_str(args, "target_id")
-            self.cdp.leases.check_allowed(tid, agent_id)
-            closed = self.cdp.close_tab(tid)
-            rec = self.ledger.record(agent_id, "close_tab", tid, {}, summary=f"Closed tab {tid}")
-            return {"closed": closed, "receipt": rec}
-
-        if name == "browser_snapshot":
-            tid = args.get("target_id")
-            frame_id = args.get("frame_id")
-            include_frames = _bool_opt(args, "include_frames", False)
-            badges = _bool_opt(args, "show_badges", True)
-            resolved_tid = self.cdp._pick_target_id(tid)
-            self.lifecycle.touch_tab(resolved_tid)
-            snap = self.cdp.evaluate_js(
-                resolved_tid,
-                build_dom_snapshot_js(show_badges=badges, agent_label=agent_id),
-                frame_id=str(frame_id) if frame_id else None,
-            )
-            if isinstance(snap, dict):
-                snap.pop("outer_html", None)
-                snap["target_id"] = resolved_tid
-                if frame_id:
-                    snap["frame_id"] = str(frame_id)
-                native_dlgs = self.cdp.get_native_dialogs(resolved_tid)
-                if native_dlgs:
-                    snap["native_dialogs"] = native_dlgs
-                if include_frames:
-                    snap["frame_tree"] = self.cdp.get_frame_tree(resolved_tid)
-            rec = self.ledger.record(
-                agent_id,
-                "snapshot",
-                resolved_tid,
-                {"show_badges": badges, "frame_id": frame_id or ""},
-                summary=f"Indexed {len(snap.get('elements', [])) if isinstance(snap, dict) else 0} targets",
-            )
-            return {"snapshot": snap, "receipt": rec}
-
-        if name == "browser_act":
-            act = _require_str(args, "action")
-            tid = args.get("target_id")
-            frame_id = args.get("frame_id")
-            resolved_tid = self.cdp._pick_target_id(tid)
-            self.lifecycle.touch_tab(resolved_tid)
-            if act == "human_takeover":
-                self.cdp.leases.force_human_override(resolved_tid)
-                self.cdp.evaluate_js(resolved_tid, build_dom_action_js("clear_hud"))
-                rec = self.ledger.record("human-user", "human_takeover", resolved_tid, {}, summary="Human preempted agent lease")
-                return {"ok": True, "target_id": resolved_tid, "receipt": rec}
-
-            if act != "clear_hud":
-                self.cdp.leases.check_allowed(resolved_tid, agent_id)
-
-            if act == "navigate":
-                url = str(args.get("url") or "about:blank")
-                nav = self.cdp.navigate(resolved_tid, url)
-                rec = self.ledger.record(agent_id, "navigate", resolved_tid, {"url": url}, summary=f"Navigated to {url}")
-                return {"ok": True, "navigation": nav, "receipt": rec}
-
-            res = self.cdp.evaluate_js(
-                resolved_tid,
-                build_dom_action_js(
-                    act,
-                    index=_int_opt(args, "index", 0) if args.get("index") is not None else None,
-                    selector=args.get("selector"),
-                    text=str(args.get("text") or ""),
-                ),
-                frame_id=str(frame_id) if frame_id else None,
-            )
-            rec = self.ledger.record(
-                agent_id,
-                f"dom_{act}",
-                resolved_tid,
-                {"index": args.get("index"), "selector": args.get("selector"), "frame_id": frame_id or ""},
-                status="OK" if isinstance(res, dict) and res.get("ok") else "WARN",
-                summary=f"Executed {act} on tab {resolved_tid}",
-            )
-            return {"result": res, "target_id": resolved_tid, "receipt": rec}
-
-        if name == "browser_dialog":
-            act = str(args.get("action") or "status")
-            tid = args.get("target_id")
-            prompt_text = str(args.get("prompt_text") or "")
-            dialog_id = args.get("dialog_id")
-            resolved_tid = self.cdp._pick_target_id(tid)
-            self.lifecycle.touch_tab(resolved_tid)
-            if act in ("accept", "dismiss"):
-                self.cdp.leases.check_allowed(resolved_tid, agent_id)
-                self.cdp.set_native_dialog_policy(resolved_tid, accept=(act == "accept"), prompt_text=prompt_text)
-                try:
-                    self.cdp.run_session(
-                        resolved_tid,
-                        [
-                            ("Page.enable", {}),
-                            ("Page.handleJavaScriptDialog", {"accept": act == "accept", "promptText": prompt_text}),
-                        ],
-                        timeout=3.0,
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
-            res = self.cdp.evaluate_js(
-                resolved_tid,
-                build_dialog_control_js(action=act, prompt_text=prompt_text, dialog_id=str(dialog_id) if dialog_id else None),
-            )
-            native_dlgs = self.cdp.get_native_dialogs(resolved_tid)
-            rec = self.ledger.record(
-                agent_id,
-                f"dialog_{act}",
-                resolved_tid,
-                {"action": act, "dialog_id": dialog_id or ""},
-                summary=f"Dialog supervisor {act} on tab {resolved_tid}",
-            )
-            return {"target_id": resolved_tid, "dialog": res, "native_dialogs": native_dlgs, "receipt": rec}
-
-        if name == "browser_vault":
-            v_act = str(args.get("action") or "list")
-            if v_act == "list":
-                entries = self.vault.list_entries(origin_filter=args.get("origin"))
-                return {"ok": True, "action": "list", "entries": entries}
-            if v_act == "register":
-                pub = self.vault.upsert_entry(
-                    origin=_require_str(args, "origin"),
-                    username=str(args.get("username") or ""),
-                    password=str(args.get("password") or ""),
-                    totp_secret=str(args.get("totp_secret") or ""),
-                    vault_id=args.get("vault_id") if isinstance(args.get("vault_id"), str) and args.get("vault_id").strip() else None,
-                    label=str(args.get("label") or ""),
-                )
-                rec = self.ledger.record(
-                    agent_id,
-                    "vault_register",
-                    "",
-                    {"vault_id": pub["vault_id"], "origin": pub["origin"], "username": pub["username"]},
-                    summary=f"Registered origin-bound vault credential {pub['vault_id']} for {pub['origin']}",
-                )
-                return {"ok": True, "action": "register", "entry": pub, "receipt": rec}
-            if v_act == "delete":
-                vid = _require_str(args, "vault_id")
-                deleted = self.vault.delete_entry(vid)
-                rec = self.ledger.record(agent_id, "vault_delete", "", {"vault_id": vid}, summary=f"Deleted vault entry {vid}")
-                return {"ok": True, "action": "delete", "deleted": deleted, "receipt": rec}
-            if v_act in ("fill", "enter_totp"):
-                vid = _require_str(args, "vault_id")
-                tid = args.get("target_id")
-                fill_res = (
-                    self.vault.fill_credential(self.cdp, tid, vid, agent_id=agent_id)
-                    if v_act == "fill"
-                    else self.vault.fill_totp(self.cdp, tid, vid, agent_id=agent_id)
-                )
-                rec = self.ledger.record(
-                    agent_id,
-                    f"vault_{v_act}",
-                    str(fill_res.get("target_id") or ""),
-                    {
-                        "vault_id": vid,
-                        "origin": fill_res.get("origin", ""),
-                        "filled_fields": fill_res.get("filled_fields", []),
-                    },
-                    status="OK" if fill_res.get("ok") else "WARN",
-                    summary=f"Executed model-blind {v_act} ({vid}) on {fill_res.get('origin', '')}",
-                )
-                return {**fill_res, "receipt": rec}
-            raise ValueError(f"Unsupported browser_vault action: {v_act!r}")
-
-        if name == "browser_exec_pipeline":
-            max_calls = _int_opt(args, "max_calls", 25)
-            pipe_res = self.pipeline.run_pipeline(
-                steps=args.get("steps"),
-                script=args.get("script"),
-                max_calls=max_calls,
-                agent_id=agent_id,
-            )
-            rec = self.ledger.record(
-                agent_id,
-                "exec_pipeline",
-                "",
-                {"calls_executed": pipe_res.get("calls_executed", 0), "status": pipe_res.get("status", "COMPLETED")},
-                status=str(pipe_res.get("status") or "OK"),
-                summary=f"Executed single-turn pipeline ({pipe_res.get('calls_executed', 0)} calls)",
-            )
-            return {**pipe_res, "receipt": rec}
-
-        if name == "browser_playbooks":
-            p_act = str(args.get("action") or "list")
-            if p_act == "list":
-                return {"ok": True, "playbooks": self.playbooks.list_playbooks(domain=args.get("domain"))}
-            req_url = str(args.get("url") or "") or self._active_tab_url(args.get("target_id"))
-            req_goal = str(args.get("goal") or "")
-            if p_act == "match":
-                matched = self.playbooks.match_playbook(req_url, req_goal) or (
-                    self.playbooks.match_playbook("", req_goal) if req_url else None
-                )
-                return {"ok": True, "matched": matched}
-            if p_act == "replay":
-                pid = str(args.get("playbook_id") or "")
-                pb = (
-                    self.playbooks.get_playbook(pid)
-                    if pid
-                    else (
-                        self.playbooks.match_playbook(req_url, req_goal)
-                        or (self.playbooks.match_playbook("", req_goal) if req_url else None)
-                    )
-                )
-                if pb is None:
-                    raise ValueError("No verified playbook matched playbook_id or (url, goal)")
-                rep = self.playbooks.replay_playbook(
-                    pb,
-                    cdp=self.cdp,
-                    ledger=self.ledger,
-                    target_id=args.get("target_id"),
-                    agent_id=agent_id,
-                )
-                if rep.get("status") == "COMPLETED":
-                    snap_after = self.cdp.evaluate_js(rep["target_id"], build_dom_snapshot_js(show_badges=False, agent_label=""))
-                    after_url = str(snap_after.get("url") or "") if isinstance(snap_after, dict) else ""
-                    ext = extract_structured_page(
-                        snap_after.get("outer_html", "") if isinstance(snap_after, dict) else "",
-                        after_url,
-                    )
-                    gen_ui = synthesize_generative_ui(ext["rows"], title=ext["title"] or pb["playbook_id"])
-                    self.set_latest_genui(gen_ui)
-                    self._index_extracted_rows(args, after_url, str(ext.get("title") or ""), ext["rows"])
-                    rep["extracted"] = ext
-                    rep["generative_ui"] = gen_ui
-                return rep
-            if p_act == "delete":
-                pid = _require_str(args, "playbook_id")
-                deleted = self.playbooks.delete_playbook(pid)
-                rec = self.ledger.record(agent_id, "playbook_delete", "", {"playbook_id": pid, "deleted": deleted}, summary=f"Deleted playbook {pid}")
-                return {"ok": True, "deleted": deleted, "playbook_id": pid, "receipt": rec}
-            raise ValueError(f"Unsupported browser_playbooks action: {p_act!r}")
-
-        if name in ("browser_extract_structured", "browser_generative_ui"):
-            resolved_tid = self.cdp._pick_target_id(args.get("target_id"))
-            self.lifecycle.touch_tab(resolved_tid)
-            snap = self.cdp.evaluate_js(resolved_tid, build_dom_snapshot_js(show_badges=False, agent_label=""))
-            html_src = snap.get("outer_html", "") if isinstance(snap, dict) else ""
-            url = snap.get("url", "") if isinstance(snap, dict) else ""
-            extracted = extract_structured_page(html_src, url)
-            gen_ui = synthesize_generative_ui(extracted["rows"], title=extracted["title"] or "Live Tab Workspace")
-            self.set_latest_genui(gen_ui)
-            fmt = str(args.get("format") or "json")
-            rec = self.ledger.record(
-                agent_id, name, resolved_tid, {"url": url}, summary=f"Synthesized {len(extracted['rows'])} entities from {url[:60]}"
-            )
-            self._index_extracted_rows(args, url, str(extracted.get("title") or ""), extracted["rows"], rec["receipt_id"])
-            if name == "browser_generative_ui":
-                return {"target_id": resolved_tid, "url": url, "generative_ui": gen_ui, "rows": extracted["rows"], "receipt": rec}
-            return {
-                "target_id": resolved_tid,
-                "extracted": extracted,
-                "formatted": format_extracted_rows(extracted["rows"], fmt),
-                "generative_ui": gen_ui,
-                "receipt": rec,
-            }
-
-        if name == "browser_run_goal":
-            max_steps = _int_opt(args, "max_steps", 8)
-            res = self.goals.run_goal(
-                goal=_require_str(args, "goal"),
-                target_id=args.get("target_id"),
-                start_url=args.get("start_url"),
-                max_steps=max_steps,
-                agent_id=agent_id,
-                show_badges=_bool_opt(args, "show_badges", True),
-            )
-            self.set_latest_genui(res.get("generative_ui"))
-            ext_obj = res.get("extracted")
-            if isinstance(ext_obj, dict):
-                self._index_extracted_rows(
-                    args,
-                    str(res.get("url") or res.get("final_url") or ""),
-                    str(ext_obj.get("title") or ""),
-                    ext_obj.get("rows"),
-                    str((res.get("receipt") or {}).get("receipt_id") or ""),
-                )
-            return res
-
-        if name == "browser_bulk_extract":
-            raw_urls = args.get("urls")
-            if not isinstance(raw_urls, list):
-                raise ValueError("'urls' must be a JSON array of URL strings")
-            conc = _int_opt(args, "concurrency", 4)
-            res = self.bulk.run_job(
-                urls=[str(u) for u in raw_urls],
-                concurrency=conc,
-                output_format=str(args.get("format") or "json"),
-                agent_id=agent_id,
-            )
-            self.set_latest_genui(res.get("generative_ui"))
-            self._index_extracted_rows(
-                args,
-                "luminara://bulk-extract",
-                f"Bulk Job {res.get('job_id', '')}",
-                res.get("rows"),
-                str((res.get("receipt") or {}).get("receipt_id") or ""),
-            )
-            return res
-
-        if name == "browser_handoff_resume":
-            res = self.goals.resume_handoff(_require_str(args, "run_id"))
-            self.set_latest_genui(res.get("generative_ui"))
-            ext_obj = res.get("extracted")
-            if isinstance(ext_obj, dict):
-                self._index_extracted_rows(
-                    args,
-                    str(res.get("url") or ""),
-                    str(ext_obj.get("title") or ""),
-                    ext_obj.get("rows"),
-                    str((res.get("receipt") or {}).get("receipt_id") or ""),
-                )
-            return res
-
         handled = (
-            dispatch_100x_tool(self, name, args, agent_id)
+            dispatch_core_tool(self, name, args, agent_id)
+            or dispatch_100x_tool(self, name, args, agent_id)
             or dispatch_flow_tool(self, name, args, agent_id)
             or dispatch_v31_tool(self, name, args, agent_id)
         )
@@ -639,6 +260,7 @@ def create_agent_http_server(
     port: int = 8796,
 ) -> LoopbackHTTPServer:
     """Create a thread-pooled HTTP + MCP v2 server bound strictly to loopback."""
+    started_at = time.time()
 
     class Handler(LoopbackJSONHandler):
         local_ui_key = runtime.local_ui_key
@@ -681,6 +303,10 @@ def create_agent_http_server(
 
                 if path == "/.well-known/agent.json":
                     self.send_json(build_agent_manifest(runtime.current_profile(), host, srv_port, runtime.cdp.base_http))
+                    return
+
+                if path == "/api/agent/desktop/status":
+                    self.send_json(build_desktop_heartbeat(runtime, started_at))
                     return
 
                 if path == "/api/agent/status":
@@ -727,22 +353,28 @@ def create_agent_http_server(
                 if path == "/api/agent/casebundles":
                     raw_name = (qs.get("name") or qs.get("bundle_file") or [None])[0]
                     case_id = (qs.get("case_id") or [None])[0]
+                    zpath: Path | None = None
                     if raw_name:
-                        zpath = safe_join(runtime.sequence_guard.casebundles_dir, Path(str(raw_name)).name)
-                        if not zpath.is_file():
-                            self.send_json({"error": f"Casebundle not found: {raw_name}"}, status=404)
-                            return
+                        cand = safe_join(runtime.sequence_guard.casebundles_dir, Path(str(raw_name)).name)
+                        if cand.is_file():
+                            zpath = cand
+                    elif case_id:
+                        slug = "".join(ch for ch in str(case_id) if ch.isalnum() or ch in ("-", "_", "."))
+                        cand_name = slug if slug.endswith(".zip") else f"{slug}.zip"
+                        cand = safe_join(runtime.sequence_guard.casebundles_dir, cand_name)
+                        if cand.is_file():
+                            zpath = cand
                     else:
-                        zpath = None
-                        if case_id:
-                            slug = "".join(ch for ch in str(case_id) if ch.isalnum() or ch in ("-", "_", "."))
-                            cand_name = slug if slug.endswith(".zip") else f"{slug}.zip"
-                            cand = safe_join(runtime.sequence_guard.casebundles_dir, cand_name)
-                            if cand.is_file():
-                                zpath = cand
-                        if zpath is None:
-                            exp = runtime.sequence_guard.export_casebundle(case_id=case_id)
-                            zpath = Path(str(exp["bundle_path"])).resolve()
+                        existing = sorted(
+                            runtime.sequence_guard.casebundles_dir.glob("*.zip"),
+                            key=lambda p: p.stat().st_mtime,
+                            reverse=True,
+                        )
+                        if existing:
+                            zpath = existing[0]
+                    if zpath is None or not zpath.is_file():
+                        self.send_json({"error": f"Casebundle not found: {raw_name or case_id or 'latest'}"}, status=404)
+                        return
                     self.send_bytes(zpath.read_bytes(), content_type="application/zip", filename=zpath.name)
                     return
 
@@ -770,7 +402,13 @@ def create_agent_http_server(
                     qual = int((qs.get("quality") or ["75"])[0])
                     resolved_tid, b64 = runtime.cdp.capture_screenshot(tid, fmt=fmt, quality=qual)
                     norm_fmt = "jpeg" if fmt.lower() == "jpg" else fmt.lower()
-                    self.send_json({"target_id": resolved_tid, "mime": f"image/{norm_fmt}", "data_base64": b64})
+                    self.send_json(runtime.redactor.redact_payload({"target_id": resolved_tid, "mime": f"image/{norm_fmt}", "data_base64": b64}))
+                    return
+
+                runtime.server_port = srv_port
+                team_get = handle_team_get(runtime, path.rstrip("/") or "/", qs)
+                if team_get is not None:
+                    self.send_json(team_get[0], status=team_get[1])
                     return
 
                 self.send_json({"error": "Not found"}, status=404)
@@ -803,6 +441,15 @@ def create_agent_http_server(
             try:
                 if req_path == "/api/agent/mcp":
                     self._handle_mcp(body)
+                    return
+
+                if req_path in ("/api/agent/desktop/takeover", "/api/agent/shutdown"):
+                    if not self._has_valid_ui_key((self.headers.get("X-Luminara-UI-Key") or "").strip()):
+                        self.send_json({"error": f"{req_path} requires human UI authorization (X-Luminara-UI-Key)"}, status=403)
+                        return
+                    cb = bool(body.get("close_browser", False))
+                    out = trigger_desktop_takeover(runtime) if req_path.endswith("/takeover") else initiate_graceful_shutdown(runtime, self.server, close_browser=cb)
+                    self.send_json(out)
                     return
 
                 if req_path == "/api/agent/bulk/cancel":
@@ -844,6 +491,13 @@ def create_agent_http_server(
                     self.send_json({"ok": True, "scope": scope, "ttl_sec": eff_ttl, "token": tok})
                     return
 
+                runtime.server_port = self.server.server_port
+                ui_ok = self._has_valid_ui_key((self.headers.get("X-Luminara-UI-Key") or "").strip())
+                team_post = handle_team_post(runtime, req_path, body, has_ui_key=ui_ok)
+                if team_post is not None:
+                    self.send_json(team_post[0], status=team_post[1])
+                    return
+
                 route_map = {
                     "/api/agent/open": "browser_open_tab", "/api/agent/close": "browser_close_tab",
                     "/api/agent/snapshot": "browser_snapshot", "/api/agent/act": "browser_act",
@@ -864,10 +518,9 @@ def create_agent_http_server(
                 if not tool_name:
                     self.send_json({"error": f"Unknown endpoint {req_path}"}, status=404)
                     return
-                if (
-                    str(body.get("action") or "") in HUMAN_ONLY_ACTIONS.get(tool_name, ())
-                    or requires_human_ui_key_v31(tool_name, body)
-                ) and not self._has_valid_ui_key((self.headers.get("X-Luminara-UI-Key") or "").strip()):
+                if requires_human_ui_key_v31(tool_name, body) and not self._has_valid_ui_key(
+                    (self.headers.get("X-Luminara-UI-Key") or "").strip()
+                ):
                     self.send_json(
                         {"error": f"{tool_name} {body.get('action')} requires human UI authorization (X-Luminara-UI-Key)"},
                         status=403,
@@ -913,7 +566,7 @@ def create_agent_http_server(
                     t_args = params.get("arguments") or {}
                     if not isinstance(t_args, dict):
                         raise ValueError("tool arguments must be an object")
-                    if str(t_args.get("action") or "") in HUMAN_ONLY_ACTIONS.get(t_name, ()) or requires_human_ui_key_v31(t_name, t_args):
+                    if requires_human_ui_key_v31(t_name, t_args):
                         if not self._has_valid_ui_key((self.headers.get("X-Luminara-UI-Key") or "").strip()):
                             raise PermissionError(f"{t_name} {t_args.get('action')} requires human UI authorization (X-Luminara-UI-Key)")
                     payload = runtime.dispatch_tool(t_name, t_args)
@@ -958,12 +611,7 @@ def create_agent_http_server(
     return LoopbackHTTPServer((host, port), Handler)
 
 
-def run_agent_daemon(
-    forge_root: Path,
-    host: str = "127.0.0.1",
-    port: int = 8796,
-    cdp_port: int = 9229,
-) -> None:
+def run_agent_daemon(forge_root: Path, host: str = "127.0.0.1", port: int = 8796, cdp_port: int = 9229) -> None:
     runtime = LuminaraAgentRuntime(forge_root=forge_root, cdp_host="127.0.0.1", cdp_port=cdp_port)
     try:
         atomic_write_private(Path.home() / ".luminara-browser" / "local_ui_key.txt", runtime.local_ui_key + "\n")
@@ -971,8 +619,11 @@ def run_agent_daemon(
         pass
     srv = create_agent_http_server(runtime, host=host, port=port)
     runtime.scheduler.start()
-    print(
-        f"Luminara Browser Agent Daemon v{APP_VERSION} (REST + MCP v2) listening on http://{host}:{port} -> CDP 127.0.0.1:{cdp_port}",
-        flush=True,
-    )
-    srv.serve_forever()
+    print(f"Luminara Browser Agent Daemon v{APP_VERSION} (REST + MCP v2) listening on http://{host}:{port} -> CDP 127.0.0.1:{cdp_port}", flush=True)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        runtime.close()
+        srv.server_close()

@@ -128,7 +128,7 @@
     .panel {
       background: var(--bg-panel);
       border: 1px solid var(--hairline);
-      box-shadow: var(--specular), 0 12px 32px oklch(0 0 0 / 0.22);
+      box-shadow: var(--specular), light-dark(0 10px 28px -10px oklch(0.15 0.02 255 / 0.14), 0 12px 32px oklch(0 0 0 / 0.28));
       border-radius: 24px;
       padding: 16px;
       min-width: 0;
@@ -144,6 +144,8 @@
 
     .panel-head {
       display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
       justify-content: space-between;
       align-items: center;
       margin-bottom: 14px;
@@ -152,22 +154,32 @@
     }
     .metrics-strip {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 104px), 1fr));
       gap: 10px;
     }
-    @media (max-width: 640px) { .metrics-strip { grid-template-columns: repeat(2, 1fr); } }
     .metric-box {
       background: var(--bg-elevated);
       border: 1px solid var(--hairline);
       border-radius: 10px;
       padding: 10px 12px;
+      min-width: 0;
     }
     .metric-val {
       font-family: var(--font-mono);
-      font-size: 1.25rem;
+      font-size: clamp(1rem, 0.92rem + 0.3vw, 1.2rem);
       font-weight: 600;
       letter-spacing: -0.02em;
       margin-top: 2px;
+    }
+    .path-line {
+      margin-top: 8px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--ink-2);
+      overflow-wrap: anywhere;
+    }
+    @media (pointer: coarse) {
+      button, select, input[type="text"], .toggle { min-height: 44px; }
     }
 
     .form-grid {
@@ -288,6 +300,7 @@
     .banner.visible { display: block; }
     .banner.err { border-color: var(--coral); color: var(--coral); }
     .banner.ok { border-color: var(--emerald); color: var(--emerald); }
+    .banner.busy { border-color: var(--amber); color: var(--amber); }
   </style>
 </head>
 <body>
@@ -295,7 +308,7 @@
     <div class="brand-row">
       <span class="status-led"></span>
       <div>
-        <div class="title">Luminara Browser Forge Cockpit v3.1.0</div>
+        <div class="title">Luminara Browser Forge Cockpit v4.0.0</div>
         <div class="kicker">REA Clean-Room Engine · Ungoogled 157 · 28-Tool MCP v2 :8796</div>
       </div>
     </div>
@@ -314,7 +327,7 @@
           <span class="kicker">01 / Fork Identity &amp; Network Trap</span>
           <span class="kicker" id="draftBadge">SYNCED</span>
         </div>
-        <div id="statusBanner" class="banner" style="margin-bottom:12px;"></div>
+        <div id="statusBanner" class="banner" role="status" aria-live="polite" style="margin-bottom:12px;"></div>
         <form id="profileForm">
           <div class="form-grid">
             <div class="field">
@@ -359,16 +372,23 @@
 
       <section class="panel">
         <div class="panel-head">
-          <span class="kicker">02 / Portable Win64 Runtime Telemetry</span>
+          <span class="kicker">02 / Desktop Application &amp; Win64 Runtime Telemetry</span>
           <span class="kicker" id="portStateBadge">CHECKING...</span>
         </div>
         <div class="metrics-strip">
           <div class="metric-box"><div class="kicker">Core Patches</div><div class="metric-val numeric">108</div></div>
           <div class="metric-box"><div class="kicker">Win Patches</div><div class="metric-val numeric">26</div></div>
           <div class="metric-box"><div class="kicker">Cache Zip</div><div class="metric-val numeric" id="zipSizeVal">--</div></div>
+          <div class="metric-box"><div class="kicker">Native Host</div><div class="metric-val numeric" id="desktopHostVal">--</div></div>
           <div class="metric-box"><div class="kicker">REA Gate</div><div class="metric-val numeric" id="reaScoreVal">--</div></div>
         </div>
-        <div style="margin-top:10px; font-family:var(--font-mono); font-size:11px; color:var(--ink-2); word-break:break-all;" id="distPathBox"></div>
+        <div class="path-line" id="distPathBox"></div>
+        <div class="path-line" id="installStateBox"></div>
+        <div class="actions" style="margin-top:12px;">
+          <button id="btnBuildDesktop" type="button">Build Native .exe</button>
+          <button id="btnInstallDesktop" type="button">Install Per-User</button>
+          <button id="btnUninstallDesktop" type="button">Uninstall</button>
+        </div>
       </section>
     </div>
 
@@ -409,7 +429,8 @@
 
     function showBanner(msg, kind = 'ok') {
       const b = document.getElementById('statusBanner');
-      b.textContent = msg;
+      const prefix = kind === 'err' ? '✕ ' : (kind === 'busy' ? '⟳ ' : '✓ ');
+      b.textContent = prefix + msg;
       b.className = 'banner visible ' + kind;
     }
 
@@ -542,7 +563,10 @@
     async function postJson(url, payload) {
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Luminara-UI-Key': (currentState && currentState.ui_key) || '',
+        },
         body: JSON.stringify(payload || {})
       });
       const data = await res.json().catch(() => ({}));
@@ -562,6 +586,7 @@
         document.getElementById('zipSizeVal').textContent = ps.zip_cached ? `${ps.zip_size_mb}M` : 'MISS';
         document.getElementById('portStateBadge').textContent = ps.built ? 'BUILT & READY' : 'READY TO EXTRACT';
         document.getElementById('distPathBox').textContent = 'Dist: ' + ps.dist_dir;
+        syncDesktopStatus(currentState.desktop_status);
       } catch (err) {
         const cs = document.getElementById('codeStage');
         if (cs) cs.textContent = 'Error loading Studio state (' + err.message + '). Reload page or check python -m forge studio.';
@@ -587,6 +612,10 @@
 
     document.getElementById('profileForm').addEventListener('input', () => {
       document.getElementById('draftBadge').textContent = 'UNSAVED DRAFT';
+      const b = document.getElementById('statusBanner');
+      if (b.classList.contains('err') && document.getElementById('profileForm').checkValidity()) {
+        b.className = 'banner';
+      }
     });
     document.querySelectorAll('#profileForm input[required]').forEach(inp => {
       inp.addEventListener('blur', () => {
@@ -605,8 +634,8 @@
       } catch (err) {
         showBanner(err.message, 'err');
       } finally {
-        btn.disabled = false;
         btn.textContent = orig;
+        btn.disabled = btn.dataset.stateDisabled === 'true';
       }
     }
 
@@ -635,14 +664,57 @@
     document.getElementById('btnPortable').addEventListener('click', e => {
       const form = document.getElementById('profileForm');
       if (!form.reportValidity()) return;
-      showBanner('Assembling customized portable Luminara Browser 157 Win64 bundle...', 'ok');
+      showBanner('Assembling customized portable Luminara Browser 157 Win64 bundle...', 'busy');
       runWithBusy(e.currentTarget, 'Building Portable...', async () => {
         await postJson('/api/compile', readFormPayload());
         const data = await postJson('/api/build-portable', {});
         document.getElementById('draftBadge').textContent = 'SYNCED';
         document.getElementById('portStateBadge').textContent = 'BUILT & READY';
         document.getElementById('distPathBox').textContent = 'Dist: ' + data.result.dist_dir;
+        syncDesktopStatus(data.desktop_status);
         showBanner('Portable browser built at ' + data.result.cmd_launcher, 'ok');
+      });
+    });
+
+    function syncDesktopStatus(ds) {
+      if (!ds) return;
+      const nh = (ds.portable && ds.portable.native_host) || {};
+      const inst = ds.installed || {};
+      const kb = nh.size_bytes ? Math.round(nh.size_bytes / 1024) + 'KB' : 'NONE';
+      document.getElementById('desktopHostVal').textContent = nh.is_windows_gui ? `GUI ${kb}` : (nh.present ? 'PE' : 'NONE');
+      document.getElementById('installStateBox').textContent = inst.is_installed
+        ? `Installed (Per-User): ${inst.install_dir} · Apps & Features: ${inst.apps_and_features_registered ? 'YES' : 'NO'}`
+        : `Install Status: Portable only (Target: ${inst.install_dir || '%LOCALAPPDATA%\\Programs\\Luminara Browser'})`;
+      const unBtn = document.getElementById('btnUninstallDesktop');
+      if (unBtn) {
+        const off = !inst.is_installed;
+        unBtn.dataset.stateDisabled = String(off);
+        unBtn.disabled = off;
+      }
+    }
+
+    document.getElementById('btnBuildDesktop').addEventListener('click', e => {
+      runWithBusy(e.currentTarget, 'Compiling Rust...', async () => {
+        const data = await postJson('/api/build-desktop', {});
+        syncDesktopStatus(data.desktop_status);
+        showBanner('Compiled native LuminaraBrowser.exe GUI host at ' + (data.result.staged_exe || data.result.built_exe), 'ok');
+      });
+    });
+
+    document.getElementById('btnInstallDesktop').addEventListener('click', e => {
+      runWithBusy(e.currentTarget, 'Installing...', async () => {
+        const data = await postJson('/api/install-desktop', { create_desktop_shortcut: true, create_start_menu: true });
+        syncDesktopStatus(data.desktop_status);
+        showBanner('Installed Luminara Browser per-user at ' + data.result.manifest.install_dir, 'ok');
+      });
+    });
+
+    document.getElementById('btnUninstallDesktop').addEventListener('click', e => {
+      if (!window.confirm('Uninstall Luminara Browser per-user installation? Your bookmarks, profile, and vault data will be preserved.')) return;
+      runWithBusy(e.currentTarget, 'Uninstalling...', async () => {
+        const data = await postJson('/api/uninstall-desktop', { purge_data: false });
+        syncDesktopStatus(data.desktop_status);
+        showBanner('Uninstalled per-user Luminara Browser (user browsing data preserved).', 'ok');
       });
     });
 

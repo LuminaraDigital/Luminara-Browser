@@ -25,15 +25,29 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           New-Item -ItemType Directory -Force -Path chromium-forge/cache | Out-Null
           $zipPath = "chromium-forge/cache/ungoogled-chromium_157.0.8103.50-1.1_windows_x64.zip"
           $expectedSha = "42a846b04e73f7d54a63e39964a7d5b73875507a2a205e6cdb32e88d7928e97d"
           $url = "https://github.com/ungoogled-software/ungoogled-chromium-windows/releases/download/157.0.8103.50-1.1/ungoogled-chromium_157.0.8103.50-1.1_windows_x64.zip"
           curl.exe -fL --retry 3 -o $zipPath $url
+          if ($LASTEXITCODE -ne 0) { throw "curl.exe failed with exit code $LASTEXITCODE" }
           $actualSha = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLower()
           if ($actualSha -ne $expectedSha) {
             throw "Base archive SHA-256 mismatch: expected $expectedSha, got $actualSha"
           }
+
+      - name: Test & compile native Rust Win32 Desktop Host (LuminaraBrowser.exe)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          Push-Location desktop
+          cargo test
+          if ($LASTEXITCODE -ne 0) { throw "cargo test failed" }
+          cargo build --release
+          if ($LASTEXITCODE -ne 0) { throw "cargo build --release failed" }
+          Pop-Location
 
       - name: Assemble portable Luminara Browser & run unit, REA, A/B & 100x gates
         shell: pwsh
@@ -47,6 +61,7 @@ jobs:
           python -m forge verify-arch
           python -m forge verify-upstream-patches
           python -m forge build-portable
+          python -m forge desktop-status
           python -W error -m unittest discover -s tests -v
           python -m forge verify-rea
           python -m forge benchmark
@@ -56,16 +71,34 @@ jobs:
           @'
           import sys, zipfile
           z = zipfile.ZipFile("dist/Luminara-Browser-win64-portable.zip")
-          toks = ("local_ui_key.txt", "action_ledger.jsonl", "vault.json", "vault.key.json", ".sqlite3", "scheduled_tasks.json", "sequence_guard_state.json", "casebundles/")
-          bad = [n for n in z.namelist() if any(t in n for t in toks)]
-          sp = [n for n in z.namelist() if n.endswith("luminara-copilot/sidepanel.js")]
-          sp_src = z.read(sp[0]).decode("utf-8") if sp else ""
+          names = {n.replace("\\", "/") for n in z.namelist()}
+          toks = ("local_ui_key.txt", "install_manifest.json", "action_ledger.jsonl", "vault.json", "vault.key.json", "llm_config.json", "luminara-v4-config.json", "luminara-v4-state.json", "active_handoffs.json", "latest_genui.json", ".sqlite3", "scheduled_tasks.json", "sequence_guard_state.json", "casebundles/", "Logs/", ".log")
+          bad = [n for n in names if any(t in n for t in toks)]
           if bad:
               sys.exit("Secret leaked in zip: " + str(bad))
-          if 'const UI_KEY = "";' not in sp_src:
-              sys.exit("UI_KEY leaked or missing in sidepanel.js")
-          print("Release zip secret & UI_KEY scrub verified:", len(z.namelist()), "entries")
+          if "LuminaraBrowser.exe" not in names or "Install-Luminara-Browser.cmd" not in names:
+              sys.exit("Native desktop host or installer shim missing from release zip")
+          if "App/extensions/luminara-theme/manifest.json" not in names:
+              sys.exit("Warm Atelier theme extension manifest missing from release zip")
+          ui_key_surfaces = (
+              "App/extensions/luminara-copilot/sidepanel.js",
+              "App/extensions/forge-shield/popup.js",
+              "App/extensions/luminara-newtab/newtab.js",
+              "App/extensions/luminara-newtab/newtab_bg.js",
+              "App/extensions/luminara-newtab/workspace.js",
+              "App/luminara_pages/newtab.html",
+              "App/luminara_pages/workspace.html",
+              "App/forge_ntp/index.html",
+          )
+          for surf in ui_key_surfaces:
+              if surf not in names:
+                  sys.exit(f"Required UI_KEY surface missing from release zip: {surf}")
+              surf_src = z.read(surf).decode("utf-8")
+              if 'const UI_KEY = "";' not in surf_src:
+                  sys.exit(f"UI_KEY leaked or missing in {surf}")
+          print("Release zip secret, native host, theme extension & 8-surface UI_KEY scrub verified:", len(names), "entries")
           '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw "Release zip audit failed" }
           $hash = (Get-FileHash -LiteralPath "dist/Luminara-Browser-win64-portable.zip" -Algorithm SHA256).Hash.ToLower()
           [System.IO.File]::WriteAllText((Join-Path (Get-Location) "dist/SHA256SUMS.txt"), "$hash  Luminara-Browser-win64-portable.zip`n", [System.Text.UTF8Encoding]::new($false))
           python -m forge sign-manifest --artifact-name Luminara-Browser-win64-portable.zip --artifact-sha256 $hash --out dist/release-manifest.json

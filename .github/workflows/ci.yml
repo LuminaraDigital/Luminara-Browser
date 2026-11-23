@@ -25,15 +25,16 @@ jobs:
         run: |
           import subprocess, sys
           from pathlib import Path
-          blocked_exts = {".zip", ".7z", ".exe", ".msi", ".dll", ".pdb", ".crx", ".pak", ".tar", ".gz", ".tgz", ".xz", ".bz2", ".pem", ".key"}
-          blocked_names = {".env", "vault.json", "vault.key.json", "local_ui_key.txt", "action_ledger.jsonl", "knowledge_graph.sqlite3", "monitors_eval.sqlite3", "luminara_memory.sqlite3", "active_handoffs.json", "scheduled_tasks.json", "sequence_guard_state.json", "latest_genui.json"}
+          blocked_exts = {".zip", ".7z", ".exe", ".msi", ".dll", ".pdb", ".crx", ".pak", ".tar", ".gz", ".tgz", ".xz", ".bz2", ".pem", ".key", ".log"}
+          blocked_names = {".env", "vault.json", "vault.key.json", "llm_config.json", "luminara-v4-config.json", "luminara-v4-state.json", "local_ui_key.txt", "install_manifest.json", "action_ledger.jsonl", "knowledge_graph.sqlite3", "monitors_eval.sqlite3", "luminara_memory.sqlite3", "active_handoffs.json", "scheduled_tasks.json", "sequence_guard_state.json", "latest_genui.json"}
           blocked_suffixes = (".sqlite3", ".sqlite3-wal", ".sqlite3-shm", ".key.json")
           files = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
           bad = []
           for rel in files:
               p = Path(rel)
               low = p.name.lower()
-              if low in blocked_names or p.suffix.lower() in blocked_exts or low.endswith(blocked_suffixes):
+              dir_parts = {pt.lower() for pt in p.parts[:-1]}
+              if low in blocked_names or p.suffix.lower() in blocked_exts or low.endswith(blocked_suffixes) or "logs" in dir_parts or "node_modules" in dir_parts or ".log." in low:
                   bad.append(f"Blocked file committed: {rel}")
               elif p.exists() and p.stat().st_size > 5 * 1024 * 1024:
                   bad.append(f"Oversized file (>5MB): {rel} ({p.stat().st_size} bytes)")
@@ -59,11 +60,56 @@ jobs:
           luminara-forge verify-rea --static-only
           luminara-forge benchmark-100x
           mkdir -p "$RUNNER_TEMP/lum-standalone"
-          (cd "$RUNNER_TEMP/lum-standalone" && luminara-forge --forge-root "$RUNNER_TEMP/lum-standalone" init && luminara-forge --forge-root "$RUNNER_TEMP/lum-standalone" verify-arch && luminara-forge --forge-root "$RUNNER_TEMP/lum-standalone" --core-repo "$GITHUB_WORKSPACE/ungoogled-chromium" --windows-repo "$GITHUB_WORKSPACE/ungoogled-chromium-windows" verify-rea --static-only && luminara-forge --forge-root "$RUNNER_TEMP/lum-standalone" verify-upstream-patches)
+          (cd "$RUNNER_TEMP/lum-standalone" && luminara-forge --forge-root "$RUNNER_TEMP/lum-standalone" init && luminara-forge --forge-root "$RUNNER_TEMP/lum-standalone" verify-arch && luminara-forge --forge-root "$RUNNER_TEMP/lum-standalone" desktop-status && luminara-forge --forge-root "$RUNNER_TEMP/lum-standalone" --core-repo "$GITHUB_WORKSPACE/ungoogled-chromium" --windows-repo "$GITHUB_WORKSPACE/ungoogled-chromium-windows" verify-rea --static-only && luminara-forge --forge-root "$RUNNER_TEMP/lum-standalone" verify-upstream-patches)
+
+      - name: Build & verify native Rust Win32 Desktop Host (LuminaraBrowser.exe)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          Push-Location desktop
+          cargo test
+          if ($LASTEXITCODE -ne 0) { throw "cargo test failed" }
+          cargo build --release
+          if ($LASTEXITCODE -ne 0) { throw "cargo build --release failed" }
+          Pop-Location
+          Push-Location chromium-forge
+          python -m forge build-desktop --dest "$env:RUNNER_TEMP\lum-desktop-ci"
+          if ($LASTEXITCODE -ne 0) { throw "build-desktop failed" }
+          Pop-Location
+          $verOut = (& "$env:RUNNER_TEMP\lum-desktop-ci\LuminaraBrowser.exe" --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $verOut -notmatch "Luminara Browser Desktop Host") {
+            throw "Unexpected --version output: $verOut"
+          }
+          $diagOut = (& "$env:RUNNER_TEMP\lum-desktop-ci\LuminaraBrowser.exe" --diagnostics | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "--diagnostics exited with $LASTEXITCODE" }
+          $diagJson = $diagOut | ConvertFrom-Json
+          if ($diagJson.app_user_model_id -ne "Luminara.Browser.Desktop") {
+            throw "Unexpected AUMID in diagnostics: $($diagJson.app_user_model_id)"
+          }
 
       - name: Run strict unit, security & A/B test suite
         working-directory: chromium-forge
         run: python -W error -m unittest discover -s tests -v
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Verify Luminara v4 Desktop Shell (typecheck, build & smoke)
+        working-directory: luminara-shell
+        shell: bash
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            LUMINARA_SMOKE_UNIT_ONLY=1 npm run smoke
+          else
+            npm run smoke
+          fi
 
       - name: Validate Cloudflare Worker & Static Assets bundle (--dry-run)
         if: matrix.os == 'ubuntu-latest'

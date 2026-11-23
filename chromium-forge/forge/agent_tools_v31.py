@@ -128,18 +128,23 @@ MCP_TOOLS_V31_SPEC: list[dict[str, Any]] = [
 
 def requires_human_ui_key_v31(tool_name: str, args: dict[str, Any]) -> bool:
     """Canonical predicate for security-sensitive/human-only actions requiring `X-Luminara-UI-Key`."""
-    act = str(args.get("action") or "")
-    if tool_name == "browser_act" and act == "human_takeover":
+    t_name = (tool_name or "").strip()
+    act = str(args.get("action") or "").strip().lower()
+    if t_name == "browser_act" and act == "human_takeover":
         return True
-    if tool_name == "browser_mutation_guard" and act in ("approve", "reject", "disable"):
+    if t_name == "browser_mutation_guard" and act in ("approve", "reject", "disable"):
         return True
-    if tool_name == "browser_schedule" and act in ("add", "enable", "run_now"):
+    if t_name == "browser_schedule" and act in ("add", "enable", "run_now"):
         return True
-    if tool_name == "browser_sequence_guard" and act == "clear_block":
+    if t_name == "browser_sequence_guard" and act == "clear_block":
         return True
-    if tool_name == "browser_vrt_isolation" and act == "unlock_origins":
+    if t_name == "browser_vrt_isolation" and act == "unlock_origins":
         return True
-    if tool_name == "browser_monitors":
+    if t_name == "browser_vault" and act in ("register", "delete"):
+        return True
+    if t_name == "browser_playbooks" and act == "delete":
+        return True
+    if t_name == "browser_monitors":
         if act in ("delete", "rollback_playbook"):
             return True
         if act == "create" and bool(str(args.get("webhook_url") or "").strip()):
@@ -150,7 +155,7 @@ def requires_human_ui_key_v31(tool_name: str, args: dict[str, Any]) -> bool:
 def dispatch_v31_tool(runtime: Any, name: str, args: dict[str, Any], agent_id: str) -> dict[str, Any] | None:
     """Dispatch Luminara v3.1.0 Perplexity REA Suite MCP tools; returns `None` if unhandled."""
     if name == "browser_sequence_guard":
-        act = str(args.get("action") or "status")
+        act = str(args.get("action") or "status").strip().lower()
         if act == "status":
             return {"ok": True, **runtime.sequence_guard.status()}
         if act == "evaluate":
@@ -197,7 +202,7 @@ def dispatch_v31_tool(runtime: Any, name: str, args: dict[str, Any], agent_id: s
         raise ValueError(f"Unsupported browser_sequence_guard action: {act!r}")
 
     if name == "browser_vrt_isolation":
-        act = str(args.get("action") or "status")
+        act = str(args.get("action") or "status").strip().lower()
         if act == "status":
             return {"ok": True, **runtime.vrt_isolation.status()}
         if act == "lock_origins":
@@ -245,7 +250,7 @@ def dispatch_v31_tool(runtime: Any, name: str, args: dict[str, Any], agent_id: s
         raise ValueError(f"Unsupported browser_vrt_isolation action: {act!r}")
 
     if name == "browser_monitors":
-        act = str(args.get("action") or "list")
+        act = str(args.get("action") or "list").strip().lower()
         if act == "list":
             return {"ok": True, "monitors": runtime.monitors_eval.list_monitors(args.get("workspace_id"))}
         if act == "create":
@@ -292,7 +297,7 @@ def dispatch_v31_tool(runtime: Any, name: str, args: dict[str, Any], agent_id: s
         raise ValueError(f"Unsupported browser_monitors action: {act!r}")
 
     if name == "browser_search_eval":
-        act = str(args.get("action") or "scorecard")
+        act = str(args.get("action") or "scorecard").strip().lower()
         if act == "scorecard":
             return runtime.monitors_eval.latest_scorecard()
         if act == "run_suite":

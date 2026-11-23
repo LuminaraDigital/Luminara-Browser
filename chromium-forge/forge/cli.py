@@ -20,6 +20,8 @@ from .chromium_src import (
     verify_patches_against_upstream,
 )
 from .customizer import compile_fork_overlay
+from .desktop_build import build_desktop_host
+from .desktop_installer import get_desktop_status, install_desktop_app, uninstall_desktop_app
 from .models import ForkProfile
 from .monitors_eval import MonitorEvalEngine
 from .patcher import audit_patch_directory
@@ -107,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="forge",
-        description="Luminara Browser Forge v3.1.0 — Clean-room Ungoogled-Chromium & 28-Tool MCP v2 Co-Browsing Engine",
+        description="Luminara Browser Forge v4.0.0 — Clean-room Ungoogled-Chromium, PiBot Teams & 28-Tool MCP v2 Co-Browsing Engine",
     )
     parser.add_argument("--forge-root", type=Path, default=None)
     parser.add_argument("--core-repo", type=Path, default=None)
@@ -180,6 +182,28 @@ def main(argv: list[str] | None = None) -> int:
     p_eval = sub.add_parser("eval-search", parents=[sub_common], help="Run multi-provider Search/Extraction Eval Suite with Decimal CostLedger")
     p_eval.add_argument("--suite", default="extraction")
     p_eval.add_argument("--providers", default="luminara,perplexity,gemini")
+
+    p_bdesk = sub.add_parser("build-desktop", parents=[sub_common], help="Compile native Rust Win32 LuminaraBrowser.exe host & verify PE/resources")
+    p_bdesk.add_argument("--debug", action="store_true", help="Build debug profile instead of optimized release")
+    p_bdesk.add_argument("--dest", type=Path, default=None, help="Directory to stage LuminaraBrowser.exe (defaults to dist/<slug>-win64)")
+
+    p_inst = sub.add_parser("install-desktop", parents=[sub_common], help="Install Luminara Browser per-user (%LOCALAPPDATA%, Start Menu, Desktop, Apps & Features)")
+    p_inst.add_argument("--source-dir", type=Path, default=None, help="Portable dist directory containing App/chrome.exe & LuminaraBrowser.exe")
+    p_inst.add_argument("--install-dir", type=Path, default=None, help="Override per-user install directory")
+    p_inst.add_argument("--no-start-menu", action="store_true")
+    p_inst.add_argument("--no-desktop-shortcut", action="store_true")
+    p_inst.add_argument("--no-register-os", action="store_true")
+    p_inst.add_argument("--no-register-browser", action="store_true")
+    p_inst.add_argument("--dry-run", action="store_true")
+
+    p_uninst = sub.add_parser("uninstall-desktop", parents=[sub_common], help="Uninstall Luminara Browser, shortcuts, and Apps & Features registry entries")
+    p_uninst.add_argument("--install-dir", type=Path, default=None)
+    p_uninst.add_argument("--purge-data", action="store_true", help="Also delete %LOCALAPPDATA%\\Luminara Browser profile, vault, and logs")
+    p_uninst.add_argument("--no-unregister-os", action="store_true")
+    p_uninst.add_argument("--dry-run", action="store_true")
+
+    p_dstat = sub.add_parser("desktop-status", parents=[sub_common], help="Inspect portable & installed LuminaraBrowser.exe PE, shortcuts, and registry state")
+    p_dstat.add_argument("--install-dir", type=Path, default=None)
 
     args = parser.parse_args(argv)
     forge_root, def_core_for_root, def_win_for_root = _default_paths(args.forge_root or init_forge)
@@ -359,6 +383,42 @@ def main(argv: list[str] | None = None) -> int:
         provs = [p.strip() for p in str(args.providers).split(",") if p.strip()]
         eng = MonitorEvalEngine(forge_root / "outputs" / "monitors_eval.sqlite3")
         rep = eng.run_search_eval_suite(suite=args.suite, providers=provs)
+        print(json.dumps(rep, indent=2))
+        return 0 if rep["ok"] else 1
+
+    if args.command == "build-desktop":
+        dest = args.dest if args.dest is not None else (forge_root / "dist" / f"{prof.slug}-win64")
+        rep = build_desktop_host(forge_root, dest_dir=dest, release=not bool(args.debug))
+        print(json.dumps(rep, indent=2))
+        return 0 if rep["ok"] else 1
+
+    if args.command == "install-desktop":
+        src = args.source_dir if args.source_dir is not None else (forge_root / "dist" / f"{prof.slug}-win64")
+        rep = install_desktop_app(
+            src,
+            forge_root=forge_root,
+            install_dir=args.install_dir,
+            create_start_menu=not bool(args.no_start_menu),
+            create_desktop_shortcut=not bool(args.no_desktop_shortcut),
+            register_os=not bool(args.no_register_os),
+            register_browser_protocols=not bool(args.no_register_browser),
+            dry_run=bool(args.dry_run),
+        )
+        print(json.dumps(rep, indent=2))
+        return 0 if rep["ok"] else 1
+
+    if args.command == "uninstall-desktop":
+        rep = uninstall_desktop_app(
+            install_dir=args.install_dir,
+            purge_data=bool(args.purge_data),
+            unregister_os=not bool(args.no_unregister_os),
+            dry_run=bool(args.dry_run),
+        )
+        print(json.dumps(rep, indent=2))
+        return 0 if rep["ok"] else 1
+
+    if args.command == "desktop-status":
+        rep = get_desktop_status(forge_root, install_dir=args.install_dir)
         print(json.dumps(rep, indent=2))
         return 0 if rep["ok"] else 1
 

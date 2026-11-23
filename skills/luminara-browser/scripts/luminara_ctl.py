@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Zero-dependency CLI controller for Luminara Browser Agent Daemon v3.1.0 (`127.0.0.1:8796`).
+"""Zero-dependency CLI controller for Luminara Browser Agent Daemon v4.0.0 (`127.0.0.1:8796`).
 
 Exposes all 28 MCP v2 co-browsing, perception, outline, wait, screenshot, schedule,
 WebMCP, mutation-firewall, sequence-guard, VRT, monitors, search-eval, workspace,
-tab-hibernation, vault, dialog, pipeline, playbook, and ledger tools safely.
+tab-hibernation, vault, dialog, pipeline, playbook, ledger, and v4 Team Hub
+(llm-config, teams, chat, inbox, teach, lens-compare, tab-focus) tools safely.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import os
 from pathlib import Path
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ENCODING = "utf-8"
@@ -35,9 +37,30 @@ def _discover_newest_local_ui_key() -> str:
                     return val
             except OSError:
                 pass
-    candidates: list[Path] = [Path.home() / ".luminara-browser" / "local_ui_key.txt"]
+    local_app = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+    candidates: list[Path] = [
+        Path.home() / ".luminara-browser" / "local_ui_key.txt",
+        local_app / "Luminara Browser" / "AgentData" / "outputs" / "local_ui_key.txt",
+        local_app / "Programs" / "Luminara Browser" / "Agent" / "outputs" / "local_ui_key.txt",
+    ]
+    manifest_file = local_app / "Programs" / "Luminara Browser" / "install_manifest.json"
+    if manifest_file.is_file():
+        try:
+            m_obj = json.loads(manifest_file.read_text(encoding=ENCODING))
+            if isinstance(m_obj, dict) and m_obj.get("agent_data_dir"):
+                candidates.append(Path(str(m_obj["agent_data_dir"])) / "outputs" / "local_ui_key.txt")
+        except (OSError, ValueError):
+            pass
     cwd = Path.cwd()
-    for base in (cwd, cwd / "chromium-forge", cwd / "Agent", Path(__file__).resolve().parents[3] / "chromium-forge"):
+    repo_forge = Path(__file__).resolve().parents[3] / "chromium-forge"
+    for base in (
+        cwd,
+        cwd / "chromium-forge",
+        cwd / "Agent",
+        cwd / "dist" / "luminara-browser-win64" / "Agent",
+        repo_forge,
+        repo_forge / "dist" / "luminara-browser-win64" / "Agent",
+    ):
         if (base / "fork.json").is_file():
             candidates.append(base / "outputs" / "local_ui_key.txt")
     existing = [p for p in candidates if p.is_file()]
@@ -91,13 +114,15 @@ def _resolve_secret_safe_text(inline: str, env_var: str | None, use_stdin: bool)
 def main(argv: list[str] | None = None) -> int:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--human-auth", action="store_true", default=argparse.SUPPRESS, help="Authorize human-only security overrides using local_ui_key.txt")
-    p = argparse.ArgumentParser(prog="luminara_ctl", description="Control Luminara Browser v3.1.0 (28 MCP v2 tools)")
+    p = argparse.ArgumentParser(prog="luminara_ctl", description="Control Luminara Browser v4.0.0 (28 MCP v2 tools + v4 Team Hub)")
     p.add_argument("--human-auth", action="store_true", default=False, help="Authorize human-only security overrides using local_ui_key.txt")
     sub = p.add_subparsers(dest="cmd", required=True)
     _orig_add = sub.add_parser
     sub.add_parser = lambda *a, **kw: _orig_add(*a, parents=[common, *kw.pop("parents", [])], **kw)  # type: ignore[method-assign]
 
     sub.add_parser("status", help="Show daemon health, CDP mux state, vault encryption, active handoffs, and recent LUM-* receipts")
+    sub.add_parser("desktop-status", help="Show native desktop supervisor heartbeat, active leases, and highest-priority tray alert")
+    sub.add_parser("takeover", help="Preempt all active/recent agent tab leases and clear Presence/HUD overlays (requires --human-auth)")
     sub.add_parser("tabs", help="List open shared browser tabs and active leases (browser_list_tabs)")
     sub.add_parser("verify-ledger", help="Verify cryptographic SHA-256 & HMAC chain integrity of LUM-* action ledger")
 
@@ -202,8 +227,8 @@ def main(argv: list[str] | None = None) -> int:
     p_ws.add_argument("--query", default="")
     p_ws.add_argument("--limit", type=int, default=25)
 
-    p_hib = sub.add_parser("hibernate", help="Freeze idle background tabs or wake/pin a tab (browser_hibernate_tabs)")
-    p_hib.add_argument("--action", default="hibernate", choices=["hibernate", "wake", "pin", "unpin"])
+    p_hib = sub.add_parser("hibernate", help="Freeze idle or specific background tabs or wake/pin a tab (browser_hibernate_tabs)")
+    p_hib.add_argument("--action", default="hibernate", choices=["hibernate", "freeze", "wake", "pin", "unpin"])
     p_hib.add_argument("--target-id", default=None)
     p_hib.add_argument("--min-idle-sec", type=float, default=0.0)
     p_hib.add_argument("--dry-run", action="store_true")
@@ -301,6 +326,53 @@ def main(argv: list[str] | None = None) -> int:
     p_evl.add_argument("--endpoint", default="")
     p_evl.add_argument("--wire-json", "--payload-json", dest="wire_json", default="{}")
 
+    p_llm = sub.add_parser("llm-config", help="Inspect or update encrypted v4 LLM provider config / probe local Ollama (secret-safe: use --api-key-env or --stdin; write requires --human-auth)")
+    p_llm.add_argument("--action", default="get", choices=["get", "set", "ollama", "clear-key"])
+    p_llm.add_argument("--provider", default="", choices=["", "ollama", "openrouter", "gemini", "anthropic", "openai", "custom"])
+    p_llm.add_argument("--model", default="")
+    p_llm.add_argument("--base-url", default="")
+    p_llm.add_argument("--api-key-env", default=None, help="Env var holding LLM API key (never pass keys directly on argv)")
+    p_llm.add_argument("--stdin", action="store_true", help="Read JSON config object or raw API key from stdin for --action set")
+    p_llm.add_argument("--no-probe", action="store_true", help="Skip live Ollama probe during --action get")
+
+    sub.add_parser("teams", help="List built-in PiBot Multi-Bot Teams (Pi, Remy, Dana, Research Team)")
+
+    p_chat = sub.add_parser("chat", help="Chat with a named PiBot agent or Research Team grounded in live browser tabs")
+    p_chat.add_argument("--message", default="")
+    p_chat.add_argument("--message-env", default=None, help="Read chat prompt from environment variable")
+    p_chat.add_argument("--stdin", action="store_true", help="Read chat prompt from stdin")
+    p_chat.add_argument("--bot-id", default="pi", help="Target bot ID (pi, remy, dana, team-research)")
+    p_chat.add_argument("--mode", default="execute", choices=["execute", "plan"])
+    p_chat.add_argument("--target-id", default=None)
+    p_chat.add_argument("--include-open-tabs", action="store_true")
+
+    p_inb = sub.add_parser("inbox", help="Inspect or resolve unified Approval Inbox items (mutations, handoffs, sequence blocks; write requires --human-auth)")
+    p_inb.add_argument("--action", default="list", choices=["list", "deny", "allow_once", "allow_site", "resume", "clear"])
+    p_inb.add_argument("--id", default="", help="Unified inbox item ID (mut:..., handoff:..., seq:...)")
+    p_inb.add_argument("--kind", default="", choices=["", "mutation", "handoff", "sequence"])
+    p_inb.add_argument("--raw-id", default="")
+    p_inb.add_argument("--domain", default="")
+    p_inb.add_argument("--agent-id", default="")
+
+    p_tch = sub.add_parser("teach", help="List, start, or stop Teach Mode workflow recording into PlaybookMemory (start/stop requires --human-auth)")
+    p_tch.add_argument("--action", default="list", choices=["list", "start", "stop"])
+    p_tch.add_argument("--name", default="")
+    p_tch.add_argument("--goal", default="")
+    p_tch.add_argument("--target-id", default=None)
+    p_tch.add_argument("--url", default="")
+    p_tch.add_argument("--domain", default=None)
+    p_tch.add_argument("--steps-json", default=None, help="Optional JSON array of recorded steps for --action stop")
+    p_tch.add_argument("--stdin", action="store_true", help="Read JSON array of recorded steps from stdin for --action stop")
+
+    p_lens = sub.add_parser("lens-compare", help="Compare up to 5 open tabs via Cross-Tab Live Lens into Generative UI & FTS5 workspace")
+    p_lens.add_argument("--workspace-id", default="default")
+    p_lens.add_argument("--max-tabs", type=int, default=5)
+    p_lens.add_argument("--target-ids", default="", help="Optional comma-separated tab target IDs")
+    p_lens.add_argument("--title", default="")
+
+    p_foc = sub.add_parser("tab-focus", help="Bring a live browser tab to the foreground by target_id")
+    p_foc.add_argument("--target-id", required=True)
+
     args = p.parse_args(argv)
 
     req_fn = lambda path, payload=None: _request(path, payload, human_auth=bool(args.human_auth))
@@ -308,6 +380,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.cmd == "status":
             out = req_fn("/api/agent/status")
+        elif args.cmd == "desktop-status":
+            out = req_fn("/api/agent/desktop/status")
+        elif args.cmd == "takeover":
+            out = req_fn("/api/agent/desktop/takeover", {})
         elif args.cmd == "tabs":
             out = req_fn("/api/agent/tabs")
         elif args.cmd == "verify-ledger":
@@ -479,7 +555,7 @@ def main(argv: list[str] | None = None) -> int:
                 },
             )
         elif args.cmd == "hibernate":
-            if args.action in ("wake", "pin", "unpin") and not args.target_id:
+            if args.action in ("freeze", "wake", "pin", "unpin") and not args.target_id:
                 raise ValueError(f"hibernate --action {args.action} requires --target-id")
             out = req_fn(
                 "/api/agent/hibernate",
@@ -612,12 +688,117 @@ def main(argv: list[str] | None = None) -> int:
                     "wire_payload": wire_obj,
                 },
             )
+        elif args.cmd == "llm-config":
+            if args.action == "get":
+                q = "?probe=0" if args.no_probe else ""
+                out = req_fn(f"/api/agent/llm/config{q}")
+            elif args.action == "ollama":
+                q = f"?base_url={urllib.parse.quote(args.base_url, safe='')}" if args.base_url else ""
+                out = req_fn(f"/api/agent/llm/ollama{q}")
+            elif args.action == "clear-key":
+                out = req_fn(
+                    "/api/agent/llm/config",
+                    {"provider": args.provider, "model": args.model, "base_url": args.base_url, "clear_api_key": True},
+                )
+            else:
+                llm_payload: dict[str, object] = {}
+                if args.stdin:
+                    raw_in = sys.stdin.read().strip()
+                    if raw_in.startswith("{"):
+                        parsed_in = json.loads(raw_in)
+                        if not isinstance(parsed_in, dict):
+                            raise ValueError("llm-config --action set --stdin JSON must be an object")
+                        llm_payload.update(parsed_in)
+                    elif raw_in:
+                        llm_payload["api_key"] = raw_in
+                if args.provider:
+                    llm_payload["provider"] = args.provider
+                if args.model:
+                    llm_payload["model"] = args.model
+                if args.base_url:
+                    llm_payload["base_url"] = args.base_url
+                if args.api_key_env:
+                    env_key = os.environ.get(args.api_key_env, "").strip()
+                    if not env_key:
+                        raise ValueError(f"Environment variable {args.api_key_env!r} is empty or unset")
+                    llm_payload["api_key"] = env_key
+                elif "api_key" not in llm_payload and str(llm_payload.get("provider") or "") in ("openrouter", "gemini", "anthropic", "openai") and sys.stdin.isatty():
+                    entered = getpass.getpass("LLM API key (input hidden, Enter to keep existing): ").strip()
+                    if entered:
+                        llm_payload["api_key"] = entered
+                out = req_fn("/api/agent/llm/config", llm_payload)
+        elif args.cmd == "teams":
+            out = req_fn("/api/agent/teams")
+        elif args.cmd == "chat":
+            msg_txt = _resolve_secret_safe_text(args.message, args.message_env, args.stdin).strip()
+            if not msg_txt:
+                raise ValueError("chat requires --message, --message-env, or --stdin")
+            out = req_fn(
+                "/api/agent/chat",
+                {
+                    "message": msg_txt,
+                    "bot_id": args.bot_id,
+                    "mode": args.mode,
+                    "target_id": args.target_id,
+                    "include_open_tabs": args.include_open_tabs,
+                },
+            )
+        elif args.cmd == "inbox":
+            if args.action == "list":
+                out = req_fn("/api/agent/inbox")
+            else:
+                out = req_fn(
+                    "/api/agent/inbox",
+                    {
+                        "action": args.action,
+                        "id": args.id,
+                        "kind": args.kind,
+                        "raw_id": args.raw_id,
+                        "domain": args.domain,
+                        "agent_id": args.agent_id,
+                    },
+                )
+        elif args.cmd == "teach":
+            steps_payload = None
+            if args.stdin:
+                steps_payload = json.loads(sys.stdin.read())
+            elif args.steps_json is not None:
+                steps_payload = json.loads(args.steps_json)
+            if steps_payload is not None and not isinstance(steps_payload, list):
+                raise ValueError("teach --steps-json/--stdin requires a JSON array of step objects")
+            teach_body: dict[str, object] = {
+                "action": args.action,
+                "name": args.name,
+                "goal": args.goal,
+                "target_id": args.target_id,
+                "url": args.url,
+                "domain": args.domain,
+            }
+            if steps_payload is not None:
+                teach_body["steps"] = steps_payload
+            out = req_fn("/api/agent/teach", teach_body)
+        elif args.cmd == "lens-compare":
+            tids = [x.strip() for x in args.target_ids.split(",") if x.strip()] if args.target_ids else None
+            out = req_fn(
+                "/api/agent/lens/compare",
+                {
+                    "workspace_id": args.workspace_id,
+                    "max_tabs": args.max_tabs,
+                    "target_ids": tids,
+                    "title": args.title,
+                },
+            )
+        elif args.cmd == "tab-focus":
+            out = req_fn("/api/agent/tabs/focus", {"target_id": args.target_id})
         else:
             return 1
     except urllib.error.HTTPError as herr:
         body = herr.read().decode(ENCODING, errors="replace")
         herr.close()
-        print(json.dumps({"ok": False, "http_status": herr.code, "error": body or str(herr)}, indent=2))
+        err_obj: dict[str, object] = {"ok": False, "http_status": herr.code, "error": body or str(herr)}
+        if herr.code == 403 and not args.human_auth:
+            err_obj["hint"] = "Human-only endpoint rejected unauthenticated call; pass --human-auth when authorized by the user."
+        print(json.dumps(err_obj, indent=2))
         return 1
     except urllib.error.URLError as uerr:
         print(
@@ -625,7 +806,7 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "ok": False,
                     "error": f"Luminara Agent Daemon unreachable at {_daemon_url()}: {uerr.reason}",
-                    "fix": "Run Launch-Luminara-Browser.cmd to start the browser and local Agent Daemon.",
+                    "fix": "Start LuminaraBrowser.exe (installed or portable), Launch-Luminara-Browser.cmd, or `python -m forge agent-daemon` (Launch-Luminara-v4.cmd launches the standalone Electron desktop shell without :8796).",
                 },
                 indent=2,
             )

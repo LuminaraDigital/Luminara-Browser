@@ -535,6 +535,21 @@ class TabLifecycleManager:
             "errors": errors,
         }
 
+    def is_frozen(self, target_id: str) -> bool:
+        with self._lock:
+            return target_id in self._frozen
+
+    def freeze_tab(self, target_id: str) -> dict[str, Any]:
+        """Freeze one specific tab via `Page.setWebLifecycleState('frozen')`."""
+        self.cdp.run_session(
+            target_id,
+            [("Page.enable", {}), ("Page.setWebLifecycleState", {"state": "frozen"})],
+            timeout=5.0,
+        )
+        with self._lock:
+            self._frozen.add(target_id)
+        return {"ok": True, "target_id": target_id, "state": "frozen", "frozen": True}
+
     def wake_tab(self, target_id: str) -> dict[str, Any]:
         self.cdp.run_session(
             target_id,

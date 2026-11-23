@@ -54,6 +54,7 @@ class NetworkMutationFirewall:
         self.redactor = redactor or DEFAULT_REDACTOR
         self._lock = threading.Lock()
         self._guarded_targets: dict[str, str] = {}
+        self._allowed_domains: set[str] = set()
         self._pending: dict[str, dict[str, Any]] = {}
         self._history: list[dict[str, Any]] = []
         if hasattr(self.cdp, "register_fetch_hook"):
@@ -113,6 +114,33 @@ class NetworkMutationFirewall:
                 pass
         return {"ok": True, "target_id": tid, "guard_enabled": False}
 
+    @staticmethod
+    def _normalize_host(url_or_host: str) -> str:
+        raw = (url_or_host or "").strip()
+        if not raw:
+            return ""
+        host = (urllib.parse.urlparse(raw).hostname or "") if "://" in raw else raw
+        clean = host.strip().lower().rstrip(".")
+        if not clean or any(ch in clean for ch in ("/", "\\", "*", " ", "\t", "\r", "\n", "@")):
+            return ""
+        return clean
+
+    def allow_domain(self, host: str) -> str:
+        """Allow non-HIGH-risk mutating requests for an explicitly human-approved domain."""
+        norm = self._normalize_host(host)
+        if not norm:
+            raise ValueError(f"Invalid domain for allow_site: {host!r}")
+        with self._lock:
+            self._allowed_domains.add(norm)
+        return norm
+
+    def is_domain_allowed(self, url_or_host: str) -> bool:
+        norm = self._normalize_host(url_or_host)
+        if not norm:
+            return False
+        with self._lock:
+            return norm in self._allowed_domains
+
     def _evaluate_fetch_hook(self, event: dict[str, Any]) -> str | None:
         """Priority-20 hook on `CDPBridge`: pauses mutating HTTP requests on guarded tabs."""
         params = event.get("params") or {}
@@ -130,6 +158,24 @@ class NetworkMutationFirewall:
         if is_response_stage or (pattern is None) or (method not in MUTATING_HTTP_METHODS):
             return None
         if pattern != "*" and not fnmatch.fnmatchcase(url, pattern):
+            return None
+
+        risk = classify_mutation_risk(method, url)
+        if self.is_domain_allowed(url) and risk != "HIGH":
+            audit = {
+                "mutation_id": f"allow_{secrets.token_hex(4)}",
+                "status": "AUTO_ALLOWED_SITE",
+                "risk_level": risk,
+                "method": method,
+                "url": self.redactor.redact_text(url),
+                "target_id": target_id,
+                "request_id": request_id,
+                "resolved_at_ms": int(time.time() * 1000),
+            }
+            with self._lock:
+                self._history.append(audit)
+                if len(self._history) > 100:
+                    del self._history[:-100]
             return None
 
         raw_post = str(req.get("postData") or "")
@@ -299,6 +345,7 @@ class NetworkMutationFirewall:
         with self._lock:
             return {
                 "guarded_targets": sorted(self._guarded_targets),
+                "allowed_domains": sorted(self._allowed_domains),
                 "pending_count": len(self._pending),
                 "pending": [self._public_view(e) for e in self._pending.values()],
                 "recent_decisions": list(self._history[-10:]),

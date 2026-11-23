@@ -361,7 +361,7 @@ class TestLuminara100xEngine(unittest.TestCase):
                 # 2. Verify status + session-token + workspaces REST routes
                 with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/agent/status", timeout=5.0) as resp:
                     st = json.loads(resp.read().decode("utf-8"))
-                self.assertEqual(st["version"], "3.1.0")
+                self.assertEqual(st["version"], "4.0.0")
                 self.assertIn("cdp_mux", st)
                 self.assertIn("vault_encryption", st)
 

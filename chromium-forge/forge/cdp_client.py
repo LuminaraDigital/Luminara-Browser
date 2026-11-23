@@ -174,16 +174,40 @@ class TabLease:
     purpose: str = ""
 
 
+PERSON_CONTROL_SEC = 120.0  # how long a takeover waits to be reported to the agent it interrupted
+
+
+class PersonControlError(CDPError):
+    """A person took the tab back; the agent's next page-changing call on it is refused once."""
+
+
 class TabLeaseManager:
     """Advisory per-tab co-presence lease manager preventing agent-vs-agent collisions while allowing human override."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._leases: dict[str, TabLease] = {}
+        self._last_actor: dict[str, tuple[float, str]] = {}  # tab -> (expiry, agent_id) for non-leased actions
+        self._person_control: dict[str, tuple[float, str]] = {}  # tab -> (mark expiry, interrupted agent)
+        self.on_action: Callable[[str, str], None] | None = None  # runs before each allowed page-changing action
+
+    def _refuse_once_after_takeover(self, target_id: str, agent_id: str, now: float) -> None:
+        """Caller holds the lock. The interrupted agent learns of the takeover exactly once, then may continue."""
+        mark = self._person_control.get(target_id)
+        if mark is None:
+            return
+        if mark[0] <= now:
+            del self._person_control[target_id]
+        elif mark[1] == agent_id:
+            del self._person_control[target_id]
+            raise PersonControlError(
+                f"A person took control of tab {target_id}. Ask them before continuing; your next call on it will proceed."
+            )
 
     def acquire(self, target_id: str, agent_id: str, ttl_sec: float = 60.0, purpose: str = "") -> TabLease:
         now = time.time()
         with self._lock:
+            self._refuse_once_after_takeover(target_id, agent_id, now)
             existing = self._leases.get(target_id)
             if existing and existing.expires_at > now and existing.agent_id != agent_id:
                 raise CDPError(
@@ -206,21 +230,35 @@ class TabLeaseManager:
             existing = self._leases.get(target_id)
             if existing and existing.expires_at > now and existing.agent_id != agent_id:
                 raise CDPError(f"Tab {target_id} is leased by {existing.agent_id!r}; use human_takeover to preempt")
+            self._refuse_once_after_takeover(target_id, agent_id, now)
+        if self.on_action is not None:
+            self.on_action(target_id, agent_id)
+        with self._lock:
+            self._last_actor[target_id] = (time.time() + 20.0, agent_id)
 
     def release(self, target_id: str, agent_id: str | None = None) -> bool:
         with self._lock:
             existing = self._leases.get(target_id)
             if not existing:
+                if agent_id is None or (self._last_actor.get(target_id) or (0.0, ""))[1] == agent_id:
+                    self._last_actor.pop(target_id, None)
                 return False
             if agent_id is not None and existing.agent_id != agent_id:
                 return False
             del self._leases[target_id]
+            self._last_actor.pop(target_id, None)
             return True
 
-    def force_human_override(self, target_id: str) -> None:
+    def force_human_override(self, target_id: str, agent_id: str = "") -> None:
         """Human interaction always preempts any active agent lease immediately."""
+        now = time.time()
         with self._lock:
-            self._leases.pop(target_id, None)
+            lease = self._leases.pop(target_id, None)
+            actor = self._last_actor.pop(target_id, None)
+            recent_actor = actor[1] if (actor and actor[0] > now) else ""
+            interrupted = agent_id or (lease.agent_id if (lease and lease.expires_at > now) else recent_actor)
+            if interrupted:
+                self._person_control[target_id] = (now + PERSON_CONTROL_SEC, interrupted)
 
     def get_active(self, target_id: str) -> dict[str, Any] | None:
         now = time.time()
@@ -232,6 +270,31 @@ class TabLeaseManager:
                 del self._leases[target_id]
                 return None
             return asdict(lease)
+
+    def list_active(self) -> list[dict[str, Any]]:
+        now = time.time()
+        with self._lock:
+            expired = [tid for tid, lease in self._leases.items() if lease.expires_at <= now]
+            for tid in expired:
+                del self._leases[tid]
+            return [asdict(lease) for lease in self._leases.values()]
+
+    def force_human_override_all(self) -> list[str]:
+        """Preempt every active lease and recent non-leased actor immediately, marking each once."""
+        now = time.time()
+        with self._lock:
+            preempted_set: dict[str, str] = {}
+            for tid, actor in list(self._last_actor.items()):
+                if actor[0] > now and actor[1]:
+                    preempted_set[tid] = actor[1]
+            for tid, lease in list(self._leases.items()):
+                if lease.expires_at > now and lease.agent_id:
+                    preempted_set[tid] = lease.agent_id
+            for tid, interrupted in preempted_set.items():
+                self._person_control[tid] = (now + PERSON_CONTROL_SEC, interrupted)
+            self._leases.clear()
+            self._last_actor.clear()
+            return sorted(preempted_set.keys())
 
 
 class CDPBridge:

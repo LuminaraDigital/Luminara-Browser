@@ -23,10 +23,9 @@ import threading
 import time
 from typing import Any
 import urllib.parse
-import urllib.request
 
 from .action_ledger import ActionLedger, GENESIS_PREV_HASH
-from .cdp_client import CDPBridge, CDPError, is_internal_browser_url
+from .cdp_client import CDPBridge, CDPError, PersonControlError, is_internal_browser_url
 from .extractor import (
     build_dom_action_js,
     build_dom_snapshot_js,
@@ -35,8 +34,10 @@ from .extractor import (
     synthesize_generative_ui,
 )
 from .http_base import atomic_write_private, safe_join
+from .llm_client import call_llm_completion
 from .luminara_automation import PlaybookMemory, TrajectoryCompressor
 from .luminara_security import DEFAULT_REDACTOR, LuminaraRedactor
+from .perception_refs import SETTLE_PROBE_JS, wait_settled
 
 ENCODING = "utf-8"
 
@@ -279,16 +280,18 @@ _URL_TOKEN_RE = re.compile(r"(https?://[^\s'\"<>]+|file:///[^\s'\"<>]+)", re.IGN
 
 
 class MultiLLMPlannerRouter:
-    """Cascading Multi-LLM Router: Gemini -> Anthropic -> OpenAI/Ollama -> Deterministic Heuristic."""
+    """Cascading Multi-LLM Router: In-App Config -> Gemini -> Anthropic -> OpenAI/Ollama -> Deterministic Heuristic."""
 
     def __init__(
         self,
         custom_caller: Callable[[str, str], dict[str, Any]] | None = None,
         *,
         use_env_providers: bool = True,
+        llm_config_getter: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         self.custom_caller = custom_caller
         self.use_env_providers = use_env_providers
+        self.llm_config_getter = llm_config_getter
         self.last_provider_used = "heuristic"
 
     @staticmethod
@@ -301,6 +304,43 @@ class MultiLLMPlannerRouter:
             '{"action":"click|type|select|scroll|navigate|done","index":1,"text":"","url":"","reason":""}.\n'
             f"USER GOAL: {goal}\nPAST STEPS: {safe_history}\n{framed_dom}"
         )
+
+    def _configured_provider(self) -> tuple[str, Callable[[str], dict[str, Any]]] | None:
+        if self.llm_config_getter is None:
+            return None
+        try:
+            cfg = self.llm_config_getter()
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(cfg, dict) or not cfg.get("configured"):
+            return None
+        prov = str(cfg.get("provider") or "").strip().lower()
+        api_key = str(cfg.get("api_key") or "").strip()
+        base_url = str(cfg.get("base_url") or "").strip()
+        model = str(cfg.get("model") or "").strip()
+        if prov == "gemini" and api_key:
+            return ("gemini", lambda p, k=api_key, m=model, b=base_url: self._call_gemini(k, p, model=m, base_url=b))
+        if prov == "anthropic" and api_key:
+            return ("anthropic", lambda p, k=api_key, m=model, b=base_url: self._call_anthropic(k, p, model=m, base_url=b))
+        if prov in ("openai", "openrouter", "ollama", "custom"):
+            if (prov == "ollama") or base_url or api_key:
+                return (
+                    prov,
+                    lambda p, pr=prov, k=api_key, b=base_url, m=model: self._extract_json_dict(
+                        call_llm_completion(
+                            pr,
+                            api_key=k,
+                            model=m,
+                            base_url=b,
+                            user_prompt=p,
+                            json_mode=True,
+                            temperature=0.0,
+                            max_tokens=300,
+                            timeout=20.0 if pr == "ollama" else 12.0,
+                        )
+                    ),
+                )
+        return None
 
     def decide(
         self,
@@ -315,7 +355,12 @@ class MultiLLMPlannerRouter:
         if self.custom_caller is not None:
             providers.append(("custom", lambda p: self.custom_caller("custom", p)))  # type: ignore[misc]
 
-        if self.use_env_providers:
+        configured = self._configured_provider()
+        if configured is not None:
+            providers.append(configured)
+
+        explicit_local_ollama = configured is not None and configured[0] == "ollama"
+        if self.use_env_providers and not explicit_local_ollama:
             gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
             if gemini_key:
                 providers.append(("gemini", lambda p: self._call_gemini(gemini_key, p)))
@@ -376,65 +421,28 @@ class MultiLLMPlannerRouter:
         raise ValueError("Planner output did not contain a valid JSON object")
 
     @staticmethod
-    def _call_gemini(api_key: str, prompt: str) -> dict[str, Any]:
-        req = urllib.request.Request(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-            data=json.dumps(
-                {
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"responseMimeType": "application/json", "temperature": 0.0},
-                }
-            ).encode(ENCODING),
-            headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
-            method="POST",
+    def _call_gemini(api_key: str, prompt: str, *, model: str = "gemini-2.5-flash", base_url: str = "") -> dict[str, Any]:
+        txt = call_llm_completion(
+            "gemini", api_key=api_key, model=model, base_url=base_url,
+            user_prompt=prompt, json_mode=True, temperature=0.0, max_tokens=300, timeout=12.0,
         )
-        with urllib.request.urlopen(req, timeout=10.0) as resp:
-            data = json.loads(resp.read().decode(ENCODING))
-        txt = data["candidates"][0]["content"]["parts"][0]["text"]
         return MultiLLMPlannerRouter._extract_json_dict(txt)
 
     @staticmethod
-    def _call_anthropic(api_key: str, prompt: str) -> dict[str, Any]:
-        req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages",
-            data=json.dumps(
-                {
-                    "model": "claude-3-5-haiku-latest",
-                    "max_tokens": 300,
-                    "messages": [{"role": "user", "content": prompt}],
-                }
-            ).encode(ENCODING),
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "Content-Type": "application/json",
-            },
-            method="POST",
+    def _call_anthropic(api_key: str, prompt: str, *, model: str = "claude-3-5-haiku-latest", base_url: str = "") -> dict[str, Any]:
+        txt = call_llm_completion(
+            "anthropic", api_key=api_key, model=model, base_url=base_url,
+            user_prompt=prompt, json_mode=True, temperature=0.0, max_tokens=300, timeout=12.0,
         )
-        with urllib.request.urlopen(req, timeout=10.0) as resp:
-            data = json.loads(resp.read().decode(ENCODING))
-        txt = data["content"][0]["text"]
         return MultiLLMPlannerRouter._extract_json_dict(txt)
 
     @staticmethod
-    def _call_openai_compat(api_key: str, base_url: str, model: str, prompt: str) -> dict[str, Any]:
-        endpoint = base_url.rstrip("/") + "/chat/completions"
-        req = urllib.request.Request(
-            endpoint,
-            data=json.dumps(
-                {
-                    "model": model,
-                    "response_format": {"type": "json_object"},
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.0,
-                }
-            ).encode(ENCODING),
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            method="POST",
+    def _call_openai_compat(api_key: str, base_url: str, model: str, prompt: str, *, provider: str = "custom") -> dict[str, Any]:
+        txt = call_llm_completion(
+            provider, api_key=api_key, model=model, base_url=base_url,
+            user_prompt=prompt, json_mode=True, temperature=0.0, max_tokens=300, timeout=12.0,
         )
-        with urllib.request.urlopen(req, timeout=10.0) as resp:
-            data = json.loads(resp.read().decode(ENCODING))
-        return MultiLLMPlannerRouter._extract_json_dict(data["choices"][0]["message"]["content"])
+        return MultiLLMPlannerRouter._extract_json_dict(txt)
 
 
 class AgentGoalRunner:
@@ -447,10 +455,11 @@ class AgentGoalRunner:
         handoffs_path: Path | None = None,
         router: MultiLLMPlannerRouter | None = None,
         playbooks: PlaybookMemory | None = None,
+        llm_config_getter: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         self.cdp = cdp
         self.ledger = ledger
-        self.router = router or MultiLLMPlannerRouter()
+        self.router = router or MultiLLMPlannerRouter(llm_config_getter=llm_config_getter)
         self.playbooks = playbooks or PlaybookMemory(ledger.ledger_path.parent / "playbooks")
         self._handoff_lock = threading.Lock()
         self._handoffs_path = handoffs_path or (ledger.ledger_path.parent / "active_handoffs.json")
@@ -762,6 +771,17 @@ class AgentGoalRunner:
                         playbook_id=playbook_rec["playbook_id"] if playbook_rec else "",
                     )
 
+                try:
+                    self.cdp.leases.check_allowed(tid, agent_id)
+                except PersonControlError as exc:
+                    return _finalize_goal_run(
+                        snap,
+                        status_code="STOPPED_HUMAN_TAKEOVER",
+                        ledger_action="goal_human_takeover",
+                        provider_name=self.router.last_provider_used,
+                        summary_msg=str(exc),
+                    )
+
                 step_el_meta: dict[str, Any] = {}
                 if act == "navigate" and decision.get("url"):
                     nav_url = str(decision["url"]).strip()
@@ -770,7 +790,7 @@ class AgentGoalRunner:
                     exec_res: dict[str, Any] = {"ok": True, "url": nav_url}
                 elif act == "scroll":
                     exec_res = self.cdp.evaluate_js(tid, build_dom_action_js("scroll")) or {"ok": True}
-                    time.sleep(0.25)
+                    self._settle(tid)
                 elif act in ("click", "type", "select"):
                     try:
                         idx = int(decision["index"])
@@ -780,7 +800,7 @@ class AgentGoalRunner:
                                 break
                         txt = str(decision.get("text") or "")
                         exec_res = self.cdp.evaluate_js(tid, build_dom_action_js(act, index=idx, text=txt)) or {}
-                        time.sleep(0.30)
+                        self._settle(tid)
                     except (KeyError, TypeError, ValueError) as exc:
                         exec_res = {"ok": False, "error": f"Invalid target index in planner decision: {exc}"}
                 else:
@@ -822,6 +842,21 @@ class AgentGoalRunner:
         except Exception:
             self.cdp.leases.release(tid, agent_id)
             raise
+
+    def _settle(self, tid: str) -> None:
+        """Wait for the page to stop changing after an action instead of sleeping a fixed time."""
+
+        def probe() -> Any:
+            return self.cdp.evaluate_js(tid, SETTLE_PROBE_JS)
+
+        try:
+            supported = isinstance(first := probe(), dict) and "count" in first
+        except CDPError:
+            supported = True  # the action navigated: wait_settled treats the torn-down page as activity
+        if supported:
+            wait_settled(probe, quiet_sec=0.25, timeout_sec=4.0)
+        else:
+            time.sleep(0.25)
 
     def resume_handoff(self, run_id: str) -> dict[str, Any]:
         with self._handoff_lock:

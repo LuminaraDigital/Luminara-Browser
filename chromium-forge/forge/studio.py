@@ -13,12 +13,24 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .customizer import compile_fork_overlay
+from .desktop_build import DESKTOP_EXE_NAME, build_desktop_host
+from .desktop_installer import get_desktop_status, install_desktop_app, uninstall_desktop_app
 from .http_base import LoopbackHTTPServer, LoopbackJSONHandler, ensure_local_ui_key
 from .models import ForkProfile, SEARCH_ENGINE_PRESETS
 from .portable import assemble_portable_distribution
 from .verifier import run_rea_verification_suite
 
 ENCODING = "utf-8"
+
+HOST_MUTATING_STUDIO_ROUTES = frozenset(
+    {
+        "/api/build-portable",
+        "/api/build-desktop",
+        "/api/install-desktop",
+        "/api/uninstall-desktop",
+        "/api/launch-browser",
+    }
+)
 
 
 def _port_is_listening(port: int) -> bool:
@@ -33,6 +45,12 @@ def make_studio_handler(
     forge_root: Path,
     upstream_core_repo: Path,
     upstream_win_repo: Path,
+    *,
+    install_dir: Path | None = None,
+    user_data_root: Path | None = None,
+    start_menu_dir: Path | None = None,
+    desktop_dir: Path | None = None,
+    registry_backend: Any | None = None,
 ):
     forge_root = forge_root.resolve()
     ui_html_path = Path(__file__).resolve().parent / "ui" / "index.html"
@@ -54,6 +72,13 @@ def make_studio_handler(
         default = ForkProfile()
         default.save(profile_path)
         return default
+
+    def _status_payload() -> dict[str, Any]:
+        return get_desktop_status(
+            forge_root,
+            install_dir=install_dir,
+            registry_backend=registry_backend,
+        )
 
     def _read_overlay_artifacts(prof: ForkProfile) -> dict[str, str]:
         if not (upstream_core_repo / "patches").is_dir() or not upstream_win_repo.is_dir():
@@ -106,6 +131,7 @@ def make_studio_handler(
                     cz = _resolve_cache_zip()
                     self.send_json(
                         {
+                            "ui_key": ensure_local_ui_key(forge_root),
                             "profile": prof.to_dict(),
                             "presets": {k: v.name for k, v in SEARCH_ENGINE_PRESETS.items()},
                             "artifacts": artifacts,
@@ -118,6 +144,7 @@ def make_studio_handler(
                                 "built": portable_exe.exists(),
                                 "dist_dir": str((dist_root / f"{prof.slug}-win64").resolve()),
                             },
+                            "desktop_status": _status_payload(),
                         }
                     )
                     return
@@ -132,6 +159,14 @@ def make_studio_handler(
             parsed = urlparse(self.path)
             try:
                 data = self.read_json_dict()
+                if parsed.path in HOST_MUTATING_STUDIO_ROUTES:
+                    if not self._has_valid_ui_key((self.headers.get("X-Luminara-UI-Key") or "").strip()):
+                        self.send_json(
+                            {"ok": False, "error": f"{parsed.path} requires Studio UI authorization (X-Luminara-UI-Key)"},
+                            status=403,
+                        )
+                        return
+
                 if parsed.path == "/api/compile":
                     allowed = {f.name for f in ForkProfile.__dataclass_fields__.values()}
                     merged_fields = {**_current_profile().to_dict(), **{k: v for k, v in data.items() if k in allowed}}
@@ -152,7 +187,47 @@ def make_studio_handler(
                 if parsed.path == "/api/build-portable":
                     prof = _current_profile()
                     result = assemble_portable_distribution(_resolve_cache_zip(), prof, dist_root, forge_root=forge_root)
-                    self.send_json({"ok": True, "result": result})
+                    self.send_json({"ok": True, "result": result, "desktop_status": _status_payload()})
+                    return
+
+                if parsed.path == "/api/build-desktop":
+                    prof = _current_profile()
+                    dest = (dist_root / f"{prof.slug}-win64").resolve()
+                    result = build_desktop_host(forge_root, dest_dir=dest, release=True)
+                    self.send_json({"ok": True, "result": result, "desktop_status": _status_payload()})
+                    return
+
+                if parsed.path == "/api/install-desktop":
+                    prof = _current_profile()
+                    src = Path(str(data["source_dir"])).resolve() if data.get("source_dir") else (dist_root / f"{prof.slug}-win64").resolve()
+                    if not (src / "App" / "chrome.exe").is_file():
+                        assemble_portable_distribution(_resolve_cache_zip(), prof, dist_root, forge_root=forge_root)
+                    result = install_desktop_app(
+                        src,
+                        forge_root=forge_root,
+                        install_dir=install_dir,
+                        user_data_root=user_data_root,
+                        start_menu_dir=start_menu_dir,
+                        desktop_dir=desktop_dir,
+                        create_desktop_shortcut=bool(data.get("create_desktop_shortcut", True)),
+                        create_start_menu=bool(data.get("create_start_menu", True)),
+                        dry_run=bool(data.get("dry_run", False)),
+                        registry_backend=registry_backend,
+                    )
+                    self.send_json({"ok": True, "result": result, "desktop_status": _status_payload()})
+                    return
+
+                if parsed.path == "/api/uninstall-desktop":
+                    result = uninstall_desktop_app(
+                        install_dir=install_dir,
+                        user_data_root=user_data_root,
+                        start_menu_dir=start_menu_dir,
+                        desktop_dir=desktop_dir,
+                        purge_data=bool(data.get("purge_data", False)),
+                        dry_run=bool(data.get("dry_run", False)),
+                        registry_backend=registry_backend,
+                    )
+                    self.send_json({"ok": True, "result": result, "desktop_status": _status_payload()})
                     return
 
                 if parsed.path == "/api/launch-browser":
@@ -168,6 +243,12 @@ def make_studio_handler(
                         if os.name == "nt"
                         else 0
                     )
+                    native_host = dist_dir / DESKTOP_EXE_NAME
+                    if os.name == "nt" and native_host.is_file():
+                        subprocess.Popen([str(native_host)], cwd=str(dist_dir), creationflags=creation_flags, close_fds=True)
+                        self.send_json({"ok": True, "launched": str(native_host), "cdp_port": prof.cdp_port, "mode": "native_desktop_host"})
+                        return
+
                     if prof.enable_agent_cobrowsing and not _port_is_listening(prof.agent_port):
                         subprocess.Popen(
                             [
@@ -194,7 +275,7 @@ def make_studio_handler(
                             time.sleep(0.1)
 
                     ext_paths = [str(dist_dir / "App" / "extensions" / "forge-shield")]
-                    ext_names = ("luminara-copilot", "luminara-newtab") if prof.enable_agent_cobrowsing else ("luminara-newtab",)
+                    ext_names = ("luminara-copilot", "luminara-newtab", "luminara-theme") if prof.enable_agent_cobrowsing else ("luminara-newtab", "luminara-theme")
                     for ext_name in ext_names:
                         ext_candidate = dist_dir / "App" / "extensions" / ext_name
                         if ext_candidate.exists():

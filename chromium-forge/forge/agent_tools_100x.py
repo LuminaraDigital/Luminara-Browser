@@ -114,7 +114,7 @@ MCP_TOOLS_100X_SPEC: list[dict[str, Any]] = [
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["hibernate", "wake", "pin", "unpin"],
+                    "enum": ["hibernate", "freeze", "wake", "pin", "unpin"],
                     "default": "hibernate",
                 },
                 "target_id": {"type": "string"},
@@ -175,7 +175,7 @@ def _float_opt(args: dict[str, Any], key: str, default: float) -> float:
 def dispatch_100x_tool(runtime: Any, name: str, args: dict[str, Any], agent_id: str) -> dict[str, Any] | None:
     """Handle Luminara v3.0 100x MCP tools; returns `None` if `name` is not handled here."""
     if name == "browser_perception_axtree":
-        act = str(args.get("action") or "snapshot")
+        act = str(args.get("action") or "snapshot").strip().lower()
         tid = args.get("target_id")
         if act == "snapshot":
             snap = runtime.perception.capture_ax_snapshot(
@@ -260,7 +260,7 @@ def dispatch_100x_tool(runtime: Any, name: str, args: dict[str, Any], agent_id: 
         return {**res, "receipt": rec}
 
     if name == "browser_mutation_guard":
-        act = str(args.get("action") or "status")
+        act = str(args.get("action") or "status").strip().lower()
         if act == "status":
             return {"ok": True, **runtime.mutation_firewall.status()}
         if act == "enable":
@@ -288,7 +288,7 @@ def dispatch_100x_tool(runtime: Any, name: str, args: dict[str, Any], agent_id: 
         raise ValueError(f"Unsupported browser_mutation_guard action: {act!r}")
 
     if name == "browser_workspace":
-        act = str(args.get("action") or "list")
+        act = str(args.get("action") or "list").strip().lower()
         if act == "list":
             return {"ok": True, "workspaces": runtime.knowledge.list_workspaces()}
         if act == "snapshot":
@@ -336,7 +336,7 @@ def dispatch_100x_tool(runtime: Any, name: str, args: dict[str, Any], agent_id: 
         raise ValueError(f"Unsupported browser_workspace action: {act!r}")
 
     if name == "browser_hibernate_tabs":
-        act = str(args.get("action") or "hibernate")
+        act = str(args.get("action") or "hibernate").strip().lower()
         if act == "hibernate":
             res = runtime.lifecycle.hibernate_idle_tabs(
                 active_target_id=args.get("target_id"),
@@ -352,6 +352,10 @@ def dispatch_100x_tool(runtime: Any, name: str, args: dict[str, Any], agent_id: 
             )
             return {**res, "receipt": rec}
         tid = _require_str(args, "target_id")
+        if act == "freeze":
+            res = runtime.lifecycle.freeze_tab(tid)
+            rec = runtime.ledger.record(agent_id, "freeze_tab", tid, {}, summary=f"Froze tab {tid}")
+            return {**res, "receipt": rec}
         if act == "wake":
             res = runtime.lifecycle.wake_tab(tid)
             rec = runtime.ledger.record(agent_id, "wake_tab", tid, {}, summary=f"Woke frozen tab {tid}")
